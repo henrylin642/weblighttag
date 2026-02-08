@@ -25,11 +25,14 @@
 
       <main class="main">
         <section class="panel video-panel">
-          <div class="video-wrap">
-            <video id="video" playsinline muted></video>
-            <canvas id="processed"></canvas>
-            <canvas id="overlay"></canvas>
+          <div class="video-fixed">
+            <div class="video-wrap">
+              <video id="video" playsinline muted></video>
+              <canvas id="processed"></canvas>
+              <canvas id="overlay"></canvas>
+            </div>
           </div>
+          <div class="video-spacer"></div>
           <div class="video-actions">
             <button id="btnStart">Start Camera</button>
             <button id="btnStop" disabled>Stop</button>
