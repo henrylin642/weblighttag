@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Antigravity Optical ID Reader</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="header">
+        <div>
+          <h1>Antigravity Optical ID Reader</h1>
+          <p>Web-based LED optical ID decoding (96-bit payload → 16-bit core ID)</p>
+        </div>
+        <div class="status" id="status">Idle</div>
+      </header>
+
+      <main class="main">
+        <section class="panel video-panel">
+          <div class="video-wrap">
+            <video id="video" playsinline muted></video>
+            <canvas id="overlay"></canvas>
+          </div>
+          <div class="video-actions">
+            <button id="btnStart">Start Camera</button>
+            <button id="btnStop" disabled>Stop</button>
+            <button id="btnAuto" disabled>Auto Detect LEDs</button>
+            <button id="btnClear" disabled>Clear Points</button>
+            <button id="btnDecode" disabled>Start Decode</button>
+          </div>
+          <div class="hint">
+            Click three LED positions on the video, or use Auto Detect. Points are stored per session.
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2>Device Check</h2>
+          <div class="device-grid">
+            <div>
+              <div class="label">Frame Rate</div>
+              <div id="infoFps">-</div>
+            </div>
+            <div>
+              <div class="label">Exposure Time</div>
+              <div id="infoExposure">-</div>
+            </div>
+            <div>
+              <div class="label">ISO / Gain</div>
+              <div id="infoIso">-</div>
+            </div>
+            <div>
+              <div class="label">Focus Mode</div>
+              <div id="infoFocus">-</div>
+            </div>
+          </div>
+          <div id="supportHint" class="support-hint"></div>
+        </section>
+
+        <section class="panel">
+          <h2>Decoder Config</h2>
+          <div class="config-grid">
+            <label>Target FPS
+              <input id="cfgFps" type="number" min="10" max="60" value="25" />
+            </label>
+            <label>Target Exposure (sec)
+              <input id="cfgExposure" type="number" step="0.001" value="0.020" />
+            </label>
+            <label>Target ISO
+              <input id="cfgIso" type="number" step="1" value="750" />
+            </label>
+            <label>Frames Per Packet
+              <input id="cfgFrames" type="number" min="8" max="128" value="32" />
+            </label>
+            <label>Bits Per Frame
+              <input id="cfgBitsPerFrame" type="number" min="1" max="8" value="3" />
+            </label>
+            <label>Preamble Symbols (comma)
+              <input id="cfgPreamble" type="text" value="7,0,7,0" />
+            </label>
+            <label>CRC Length (bits)
+              <input id="cfgCrcLen" type="number" min="0" max="32" value="16" />
+            </label>
+            <label>CRC Poly (hex)
+              <input id="cfgCrcPoly" type="text" value="0x1021" />
+            </label>
+            <label>CRC Init (hex)
+              <input id="cfgCrcInit" type="text" value="0xFFFF" />
+            </label>
+            <label>CRC XorOut (hex)
+              <input id="cfgCrcXor" type="text" value="0x0000" />
+            </label>
+            <label>ID Start Bit
+              <input id="cfgIdStart" type="number" min="0" value="0" />
+            </label>
+            <label>ID Length
+              <input id="cfgIdLen" type="number" min="1" max="32" value="16" />
+            </label>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2>Live Metrics</h2>
+          <div class="metrics">
+            <div>
+              <div class="label">Measured FPS</div>
+              <div id="liveFps">-</div>
+            </div>
+            <div>
+              <div class="label">LED Brightness</div>
+              <div id="liveBrightness">-</div>
+            </div>
+            <div>
+              <div class="label">Thresholds</div>
+              <div id="liveThresholds">-</div>
+            </div>
+            <div>
+              <div class="label">Last Symbol</div>
+              <div id="liveSymbol">-</div>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel output">
+          <h2>Output</h2>
+          <div class="output-row">
+            <div>
+              <div class="label">Status</div>
+              <div id="decodeStatus">Idle</div>
+            </div>
+            <div>
+              <div class="label">ID</div>
+              <div id="decodeId">-</div>
+            </div>
+            <div>
+              <div class="label">CRC</div>
+              <div id="decodeCrc">-</div>
+            </div>
+          </div>
+          <div class="log" id="log"></div>
+        </section>
+      </main>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>
