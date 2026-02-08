@@ -88,8 +88,7 @@ video, canvas {
 
 #processed {
   z-index: 1;
-  mix-blend-mode: screen;
-  opacity: 0.85;
+  opacity: 0;
   pointer-events: none;
 }
 

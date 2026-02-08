@@ -48,6 +48,7 @@ const ui = {
   chkHighPass: document.getElementById("chkHighPass"),
   cfgHighPass: document.getElementById("cfgHighPass"),
   chkRoiStretch: document.getElementById("chkRoiStretch"),
+  chkOnlyEnhance: document.getElementById("chkOnlyEnhance"),
   cfgBgDim: document.getElementById("cfgBgDim"),
   valBrightness: document.getElementById("valBrightness"),
   valContrast: document.getElementById("valContrast"),
@@ -110,6 +111,7 @@ function getEnhanceConfig() {
     highPass: ui.chkHighPass.checked,
     highPassGain: Number(ui.cfgHighPass.value),
     roiStretch: ui.chkRoiStretch.checked,
+    onlyEnhanced: ui.chkOnlyEnhance.checked,
     bgDim: Number(ui.cfgBgDim.value),
   };
 }
@@ -217,6 +219,8 @@ function stopCamera() {
   state.showBgSub = false;
   state.bgModel = null;
   processedCtx.clearRect(0, 0, ui.processed.width, ui.processed.height);
+  ui.processed.style.opacity = "0";
+  ui.video.style.opacity = "1";
 }
 
 function resizeCanvases() {
@@ -294,8 +298,15 @@ function updateProcessedView() {
   const enhance = getEnhanceConfig();
   if (!enhance.enabled) {
     processedCtx.clearRect(0, 0, ui.processed.width, ui.processed.height);
+    ui.processed.style.opacity = "0";
+    ui.video.style.opacity = "1";
+    ui.processed.style.mixBlendMode = "normal";
     return;
   }
+
+  ui.processed.style.opacity = enhance.onlyEnhanced ? "1" : "0.65";
+  ui.processed.style.mixBlendMode = enhance.onlyEnhanced ? "normal" : "screen";
+  ui.video.style.opacity = enhance.onlyEnhanced ? "0" : "1";
 
   procCtx.drawImage(ui.video, 0, 0, procCanvas.width, procCanvas.height);
   const image = procCtx.getImageData(0, 0, procCanvas.width, procCanvas.height);
@@ -708,19 +719,20 @@ ui.chkBgSub.addEventListener("change", (event) => {
   state.bgModel = null;
 });
 
-[
-  ui.cfgBrightness,
-  ui.cfgContrast,
-  ui.cfgGamma,
-  ui.cfgHighPass,
-  ui.cfgBgDim,
-  ui.cfgChannel,
-  ui.chkHighPass,
-  ui.chkRoiStretch,
-  ui.chkEnhance,
-].forEach((el) => {
-  el.addEventListener("input", updateEnhanceLabels);
-});
+  [
+    ui.cfgBrightness,
+    ui.cfgContrast,
+    ui.cfgGamma,
+    ui.cfgHighPass,
+    ui.cfgBgDim,
+    ui.cfgChannel,
+    ui.chkHighPass,
+    ui.chkRoiStretch,
+    ui.chkOnlyEnhance,
+    ui.chkEnhance,
+  ].forEach((el) => {
+    el.addEventListener("input", updateEnhanceLabels);
+  });
 
 updateEnhanceLabels();
 
