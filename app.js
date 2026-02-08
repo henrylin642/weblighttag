@@ -9,6 +9,7 @@ const ui = {
   btnClear: document.getElementById("btnClear"),
   btnDecode: document.getElementById("btnDecode"),
   chkBgSub: document.getElementById("chkBgSub"),
+  chkEnhance: document.getElementById("chkEnhance"),
   infoFps: document.getElementById("infoFps"),
   infoExposure: document.getElementById("infoExposure"),
   infoIso: document.getElementById("infoIso"),
@@ -40,6 +41,19 @@ const ui = {
   cfgCrcXor: document.getElementById("cfgCrcXor"),
   cfgIdStart: document.getElementById("cfgIdStart"),
   cfgIdLen: document.getElementById("cfgIdLen"),
+  cfgChannel: document.getElementById("cfgChannel"),
+  cfgBrightness: document.getElementById("cfgBrightness"),
+  cfgContrast: document.getElementById("cfgContrast"),
+  cfgGamma: document.getElementById("cfgGamma"),
+  chkHighPass: document.getElementById("chkHighPass"),
+  cfgHighPass: document.getElementById("cfgHighPass"),
+  chkRoiStretch: document.getElementById("chkRoiStretch"),
+  cfgBgDim: document.getElementById("cfgBgDim"),
+  valBrightness: document.getElementById("valBrightness"),
+  valContrast: document.getElementById("valContrast"),
+  valGamma: document.getElementById("valGamma"),
+  valHighPass: document.getElementById("valHighPass"),
+  valBgDim: document.getElementById("valBgDim"),
 };
 
 const state = {
@@ -76,6 +90,28 @@ function logLine(text) {
 
 function setStatus(text) {
   ui.status.textContent = text;
+}
+
+function updateEnhanceLabels() {
+  ui.valBrightness.textContent = Number(ui.cfgBrightness.value).toFixed(2);
+  ui.valContrast.textContent = Number(ui.cfgContrast.value).toFixed(2);
+  ui.valGamma.textContent = Number(ui.cfgGamma.value).toFixed(2);
+  ui.valHighPass.textContent = Number(ui.cfgHighPass.value).toFixed(1);
+  ui.valBgDim.textContent = Number(ui.cfgBgDim.value).toFixed(2);
+}
+
+function getEnhanceConfig() {
+  return {
+    enabled: ui.chkEnhance.checked,
+    channel: ui.cfgChannel.value,
+    brightness: Number(ui.cfgBrightness.value),
+    contrast: Number(ui.cfgContrast.value),
+    gamma: Number(ui.cfgGamma.value),
+    highPass: ui.chkHighPass.checked,
+    highPassGain: Number(ui.cfgHighPass.value),
+    roiStretch: ui.chkRoiStretch.checked,
+    bgDim: Number(ui.cfgBgDim.value),
+  };
 }
 
 function getConfig() {
@@ -147,6 +183,7 @@ async function startCamera() {
     ui.btnClear.disabled = false;
     ui.btnDecode.disabled = false;
     ui.chkBgSub.disabled = false;
+    ui.chkEnhance.disabled = false;
 
     startFrameLoop();
   } catch (err) {
@@ -175,6 +212,8 @@ function stopCamera() {
   ui.btnDecode.disabled = true;
   ui.chkBgSub.disabled = true;
   ui.chkBgSub.checked = false;
+  ui.chkEnhance.disabled = true;
+  ui.chkEnhance.checked = true;
   state.showBgSub = false;
   state.bgModel = null;
   processedCtx.clearRect(0, 0, ui.processed.width, ui.processed.height);
@@ -235,8 +274,25 @@ function drawOverlay() {
   });
 }
 
-function updateBackgroundView() {
-  if (!state.showBgSub) {
+function getRoiRects() {
+  if (!state.rois.length || ui.overlay.width === 0) return [];
+  const scale = procCanvas.width / ui.overlay.width;
+  return state.rois.map((roi) => {
+    const size = Math.max(6, Math.round(roi.size * scale));
+    const x = Math.round(roi.x * procCanvas.width - size / 2);
+    const y = Math.round(roi.y * procCanvas.height - size / 2);
+    return {
+      x: Math.max(0, x),
+      y: Math.max(0, y),
+      w: Math.min(procCanvas.width, x + size) - Math.max(0, x),
+      h: Math.min(procCanvas.height, y + size) - Math.max(0, y),
+    };
+  });
+}
+
+function updateProcessedView() {
+  const enhance = getEnhanceConfig();
+  if (!enhance.enabled) {
     processedCtx.clearRect(0, 0, ui.processed.width, ui.processed.height);
     return;
   }
@@ -245,27 +301,116 @@ function updateBackgroundView() {
   const image = procCtx.getImageData(0, 0, procCanvas.width, procCanvas.height);
   const { data } = image;
   const length = procCanvas.width * procCanvas.height;
+  const gray = new Float32Array(length);
 
-  if (!state.bgModel || state.bgModel.length !== length) {
-    state.bgModel = new Float32Array(length);
+  for (let i = 0; i < length; i += 1) {
+    const idx = i * 4;
+    const r = data[idx];
+    const g = data[idx + 1];
+    const b = data[idx + 2];
+    let v = 0;
+    switch (enhance.channel) {
+      case "red":
+        v = r;
+        break;
+      case "green":
+        v = g;
+        break;
+      case "blue":
+        v = b;
+        break;
+      default:
+        v = (r + g + b) / 3;
+        break;
+    }
+    gray[i] = v;
+  }
+
+  if (state.showBgSub) {
+    if (!state.bgModel || state.bgModel.length !== length) {
+      state.bgModel = new Float32Array(length);
+      state.bgModel.set(gray);
+    }
+    const alpha = 0.02;
+    const gain = 4.0;
     for (let i = 0; i < length; i += 1) {
-      const idx = i * 4;
-      state.bgModel[i] = (data[idx] + data[idx + 1] + data[idx + 2]) / 3;
+      const bg = state.bgModel[i];
+      const nextBg = bg * (1 - alpha) + gray[i] * alpha;
+      state.bgModel[i] = nextBg;
+      gray[i] = Math.max(0, gray[i] - nextBg) * gain;
     }
   }
 
-  const alpha = 0.02;
-  const gain = 4.0;
+  if (enhance.highPass) {
+    const blur = new Float32Array(length);
+    const w = procCanvas.width;
+    const h = procCanvas.height;
+    for (let y = 0; y < h; y += 1) {
+      for (let x = 0; x < w; x += 1) {
+        let sum = 0;
+        let count = 0;
+        for (let dy = -1; dy <= 1; dy += 1) {
+          for (let dx = -1; dx <= 1; dx += 1) {
+            const nx = Math.max(0, Math.min(w - 1, x + dx));
+            const ny = Math.max(0, Math.min(h - 1, y + dy));
+            sum += gray[ny * w + nx];
+            count += 1;
+          }
+        }
+        blur[y * w + x] = sum / count;
+      }
+    }
+    for (let i = 0; i < length; i += 1) {
+      gray[i] = Math.max(0, gray[i] - blur[i]) * enhance.highPassGain;
+    }
+  }
+
+  const roiRects = enhance.roiStretch ? getRoiRects() : [];
+  const roiStats = roiRects.map((rect) => {
+    let min = 255;
+    let max = 0;
+    for (let y = rect.y; y < rect.y + rect.h; y += 1) {
+      for (let x = rect.x; x < rect.x + rect.w; x += 1) {
+        const v = gray[y * procCanvas.width + x];
+        min = Math.min(min, v);
+        max = Math.max(max, v);
+      }
+    }
+    return { min, max };
+  });
+
   for (let i = 0; i < length; i += 1) {
+    let v = gray[i];
+    if (enhance.roiStretch && roiRects.length) {
+      const x = i % procCanvas.width;
+      const y = Math.floor(i / procCanvas.width);
+      let inRoi = false;
+      for (let r = 0; r < roiRects.length; r += 1) {
+        const rect = roiRects[r];
+        if (x >= rect.x && x < rect.x + rect.w && y >= rect.y && y < rect.y + rect.h) {
+          const stats = roiStats[r];
+          const denom = Math.max(1, stats.max - stats.min);
+          v = ((v - stats.min) / denom) * 255;
+          inRoi = true;
+          break;
+        }
+      }
+      if (!inRoi) {
+        v *= enhance.bgDim;
+      }
+    }
+
+    v = Math.max(0, Math.min(255, v));
+    let f = v / 255;
+    f = (f - 0.5) * enhance.contrast + 0.5;
+    f = f * enhance.brightness;
+    f = Math.max(0, Math.min(1, f));
+    f = Math.pow(f, 1 / enhance.gamma);
+    const out = Math.max(0, Math.min(255, f * 255));
     const idx = i * 4;
-    const gray = (data[idx] + data[idx + 1] + data[idx + 2]) / 3;
-    const bg = state.bgModel[i];
-    const nextBg = bg * (1 - alpha) + gray * alpha;
-    state.bgModel[i] = nextBg;
-    const diff = Math.max(0, gray - nextBg) * gain;
-    data[idx] = diff;
-    data[idx + 1] = diff;
-    data[idx + 2] = diff;
+    data[idx] = out;
+    data[idx + 1] = out;
+    data[idx + 2] = out;
     data[idx + 3] = 255;
   }
 
@@ -505,7 +650,7 @@ function updateFps(ts) {
 function processFrame(ts) {
   updateFps(ts);
   if (!state.decoding || state.rois.length !== 3) {
-    updateBackgroundView();
+    updateProcessedView();
     requestNextFrame();
     return;
   }
@@ -522,7 +667,7 @@ function processFrame(ts) {
   updateLiveMetrics(brightness, smoothed, symbol);
 
   attemptDecode(symbol);
-  updateBackgroundView();
+  updateProcessedView();
   requestNextFrame();
 }
 
@@ -562,6 +707,22 @@ ui.chkBgSub.addEventListener("change", (event) => {
   state.showBgSub = event.target.checked;
   state.bgModel = null;
 });
+
+[
+  ui.cfgBrightness,
+  ui.cfgContrast,
+  ui.cfgGamma,
+  ui.cfgHighPass,
+  ui.cfgBgDim,
+  ui.cfgChannel,
+  ui.chkHighPass,
+  ui.chkRoiStretch,
+  ui.chkEnhance,
+].forEach((el) => {
+  el.addEventListener("input", updateEnhanceLabels);
+});
+
+updateEnhanceLabels();
 
 window.addEventListener("beforeunload", () => {
   if (state.stream) state.stream.getTracks().forEach((t) => t.stop());

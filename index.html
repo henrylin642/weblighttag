@@ -33,9 +33,55 @@
               <input id="chkBgSub" type="checkbox" disabled />
               背景弱化視圖
             </label>
+            <label class="toggle">
+              <input id="chkEnhance" type="checkbox" disabled checked />
+              影像強化視圖
+            </label>
           </div>
           <div class="hint">
             Click three LED positions on the video, or use Auto Detect. Points are stored per session.
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2>影像強化</h2>
+          <div class="config-grid">
+            <label>單色通道
+              <select id="cfgChannel">
+                <option value="gray">Gray</option>
+                <option value="red">Red</option>
+                <option value="green">Green</option>
+                <option value="blue">Blue</option>
+              </select>
+            </label>
+            <label>亮度
+              <input id="cfgBrightness" type="range" min="0.2" max="1.5" step="0.05" value="1" />
+              <span id="valBrightness">1.00</span>
+            </label>
+            <label>對比
+              <input id="cfgContrast" type="range" min="0.5" max="2.0" step="0.05" value="1" />
+              <span id="valContrast">1.00</span>
+            </label>
+            <label>Gamma
+              <input id="cfgGamma" type="range" min="0.5" max="2.5" step="0.05" value="1" />
+              <span id="valGamma">1.00</span>
+            </label>
+            <label>
+              <input id="chkHighPass" type="checkbox" />
+              高通強化
+            </label>
+            <label>高通強度
+              <input id="cfgHighPass" type="range" min="1" max="6" step="0.5" value="3" />
+              <span id="valHighPass">3.0</span>
+            </label>
+            <label>
+              <input id="chkRoiStretch" type="checkbox" />
+              ROI 對比拉伸
+            </label>
+            <label>背景暗化
+              <input id="cfgBgDim" type="range" min="0" max="1" step="0.05" value="0.4" />
+              <span id="valBgDim">0.40</span>
+            </label>
           </div>
         </section>
 
