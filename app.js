@@ -753,6 +753,7 @@ function autoDetectLocPoints() {
   }
   if (!state.stream) return;
 
+  const enhance = getEnhanceConfig();
   offCtx.drawImage(ui.video, 0, 0, offscreen.width, offscreen.height);
   const cropRaw = getCoverRect(
     offscreen.width,
@@ -772,13 +773,18 @@ function autoDetectLocPoints() {
   cv.cvtColor(src, hsv, cv.COLOR_RGBA2RGB);
   cv.cvtColor(hsv, hsv, cv.COLOR_RGB2HSV);
 
-  const lower = new cv.Mat(hsv.rows, hsv.cols, hsv.type(), [100, 80, 80, 0]);
-  const upper = new cv.Mat(hsv.rows, hsv.cols, hsv.type(), [130, 255, 255, 255]);
+  const hueMin = Math.max(0, Math.min(179, Math.round((enhance.hueMin / 360) * 179)));
+  const hueMax = Math.max(0, Math.min(179, Math.round((enhance.hueMax / 360) * 179)));
+  const satMin = Math.round(enhance.satMin * 255);
+  const valMin = Math.round(enhance.valMin * 255);
+  const lower = new cv.Mat(hsv.rows, hsv.cols, hsv.type(), [hueMin, satMin, valMin, 0]);
+  const upper = new cv.Mat(hsv.rows, hsv.cols, hsv.type(), [hueMax, 255, 255, 255]);
   const mask = new cv.Mat();
   cv.inRange(hsv, lower, upper, mask);
 
   const kernel = cv.Mat.ones(3, 3, cv.CV_8U);
   cv.morphologyEx(mask, mask, cv.MORPH_OPEN, kernel);
+  cv.morphologyEx(mask, mask, cv.MORPH_CLOSE, kernel);
 
   const contours = new cv.MatVector();
   const hierarchy = new cv.Mat();
@@ -788,27 +794,89 @@ function autoDetectLocPoints() {
   for (let i = 0; i < contours.size(); i += 1) {
     const cnt = contours.get(i);
     const area = cv.contourArea(cnt);
-    if (area < 6) continue;
+    if (area < 4) continue;
     const m = cv.moments(cnt);
     if (m.m00 === 0) continue;
+    const peri = cv.arcLength(cnt, true);
+    const circularity = peri === 0 ? 0 : (4 * Math.PI * area) / (peri * peri);
+    if (circularity < 0.2) continue;
     const cx = m.m10 / m.m00;
     const cy = m.m01 / m.m00;
-    blobs.push({ x: cx, y: cy, area });
+    blobs.push({ x: cx, y: cy, area, circularity });
   }
 
   blobs.sort((a, b) => b.area - a.area);
-  const top5 = blobs.slice(0, 5);
-  if (top5.length !== 5) {
+  const candidates = blobs.slice(0, 12);
+  if (candidates.length < 5) {
     ui.locStatus.textContent = "偵測到的藍燈不足 5 顆";
   } else {
-    const normalized = top5.map((p) => ({
-      x: p.x / crop.sw,
-      y: p.y / crop.sh,
-    }));
-    const ordered = sortLocPoints(normalized);
-    state.locPoints = ordered;
-    ui.locStatus.textContent = "定位燈自動偵測完成";
-    drawOverlay();
+    let best = null;
+    const combos = [];
+    for (let t = 0; t < candidates.length; t += 1) {
+      const top = candidates[t];
+      const rest = candidates.filter((_, i) => i !== t);
+      for (let a = 0; a < rest.length; a += 1) {
+        for (let b = a + 1; b < rest.length; b += 1) {
+          for (let c = b + 1; c < rest.length; c += 1) {
+            for (let d = c + 1; d < rest.length; d += 1) {
+              combos.push([top, rest[a], rest[b], rest[c], rest[d]]);
+            }
+          }
+        }
+      }
+    }
+
+    for (const set of combos) {
+      const top = set[0];
+      const base = set.slice(1);
+      const cx = base.reduce((acc, p) => acc + p.x, 0) / 4;
+      const cy = base.reduce((acc, p) => acc + p.y, 0) / 4;
+      if (top.y > cy) continue;
+      const xs = base.map((p) => p.x);
+      const ys = base.map((p) => p.y);
+      const minx = Math.min(...xs);
+      const maxx = Math.max(...xs);
+      const miny = Math.min(...ys);
+      const maxy = Math.max(...ys);
+      const corners = [
+        { x: minx, y: miny },
+        { x: maxx, y: miny },
+        { x: maxx, y: maxy },
+        { x: minx, y: maxy },
+      ];
+      let cornerDist = 0;
+      for (const p of base) {
+        let bestDist = Infinity;
+        for (const c of corners) {
+          const dx = p.x - c.x;
+          const dy = p.y - c.y;
+          bestDist = Math.min(bestDist, dx * dx + dy * dy);
+        }
+        cornerDist += bestDist;
+      }
+      const spread = (maxx - minx) * (maxy - miny);
+      const score = cornerDist / Math.max(1, spread);
+      if (!best || score < best.score) {
+        best = { score, set };
+      }
+    }
+
+    if (!best) {
+      ui.locStatus.textContent = "定位燈幾何不符合";
+    } else {
+      const normalized = best.set.map((p) => ({
+        x: p.x / crop.sw,
+        y: p.y / crop.sh,
+      }));
+      const ordered = sortLocPoints(normalized);
+      if (ordered.length === 5) {
+        state.locPoints = ordered;
+        ui.locStatus.textContent = "定位燈自動偵測完成";
+        drawOverlay();
+      } else {
+        ui.locStatus.textContent = "定位燈排序失敗";
+      }
+    }
   }
 
   src.delete();
