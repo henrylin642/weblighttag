@@ -21,6 +21,10 @@ const ui = {
   locStatus: document.getElementById("locStatus"),
   locPos: document.getElementById("locPos"),
   locRot: document.getElementById("locRot"),
+  camRes: document.getElementById("camRes"),
+  ledQuality: document.getElementById("ledQuality"),
+  btnLedQuality: document.getElementById("btnLedQuality"),
+  qualityLog: document.getElementById("qualityLog"),
   infoFps: document.getElementById("infoFps"),
   infoExposure: document.getElementById("infoExposure"),
   infoIso: document.getElementById("infoIso"),
@@ -86,6 +90,7 @@ const state = {
   capturing: false,
   captureSymbols: [],
   logLines: [],
+  qualityLines: [],
 };
 
 const offscreen = document.createElement("canvas");
@@ -100,6 +105,13 @@ function logLine(text) {
   state.logLines.unshift(`[${stamp}] ${text}`);
   state.logLines = state.logLines.slice(0, 12);
   ui.log.textContent = state.logLines.join("\n");
+}
+
+function logQuality(text) {
+  const stamp = new Date().toLocaleTimeString();
+  state.qualityLines.unshift(`[${stamp}] ${text}`);
+  state.qualityLines = state.qualityLines.slice(0, 12);
+  ui.qualityLog.textContent = state.qualityLines.join("\n");
 }
 
 function setStatus(text) {
@@ -191,6 +203,7 @@ async function startCamera() {
     window.addEventListener("resize", resizeCanvases);
 
     updateDeviceInfo();
+    ui.camRes.textContent = `${offscreen.width} x ${offscreen.height}`;
     setStatus("Camera ready");
     ui.btnStart.disabled = true;
     ui.btnStop.disabled = false;
@@ -201,6 +214,7 @@ async function startCamera() {
     ui.chkEnhance.disabled = false;
     ui.btnLocClear.disabled = false;
     ui.btnLocSolve.disabled = false;
+    ui.btnLedQuality.disabled = false;
 
     estimateIntrinsics();
 
@@ -235,6 +249,7 @@ function stopCamera() {
   ui.chkEnhance.checked = true;
   ui.btnLocClear.disabled = true;
   ui.btnLocSolve.disabled = true;
+  ui.btnLedQuality.disabled = true;
   state.showBgSub = false;
   state.bgModel = null;
   processedCtx.clearRect(0, 0, ui.processed.width, ui.processed.height);
@@ -620,6 +635,73 @@ function computeBrightness(roi) {
   return sum / (data.length / 4);
 }
 
+function computeBlueDiffAt(x, y, size) {
+  const half = Math.floor(size / 2);
+  const startX = Math.max(0, x - half);
+  const startY = Math.max(0, y - half);
+  const endX = Math.min(offscreen.width - 1, x + half);
+  const endY = Math.min(offscreen.height - 1, y + half);
+  const w = endX - startX + 1;
+  const h = endY - startY + 1;
+  const image = offCtx.getImageData(startX, startY, w, h);
+  const { data } = image;
+  const values = [];
+  for (let i = 0; i < data.length; i += 4) {
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
+    const v = Math.max(0, b - (r + g) / 2);
+    values.push(v);
+  }
+  return { values, w, h, startX, startY };
+}
+
+function estimateLedQuality() {
+  if (!state.stream) return;
+  if (state.locPoints.length !== 5) {
+    ui.ledQuality.textContent = "需要 5 點";
+    logQuality("請先點選 5 顆定位藍燈");
+    return;
+  }
+  offCtx.drawImage(ui.video, 0, 0, offscreen.width, offscreen.height);
+
+  const sizes = [];
+  const snrs = [];
+
+  state.locPoints.forEach((pt, idx) => {
+    const { px, py, scale } = mapOverlayToSource(pt);
+    const x = Math.round(px);
+    const y = Math.round(py);
+    const win = Math.max(12, Math.round(24 * scale));
+    const { values, w, h } = computeBlueDiffAt(x, y, win);
+
+    let max = 0;
+    for (const v of values) max = Math.max(max, v);
+    const thresh = max * 0.5;
+    let area = 0;
+    let sum = 0;
+    let sumSq = 0;
+    for (const v of values) {
+      if (v >= thresh) area += 1;
+      sum += v;
+      sumSq += v * v;
+    }
+    const mean = sum / values.length;
+    const varv = Math.max(0, sumSq / values.length - mean * mean);
+    const std = Math.sqrt(varv);
+    const snr = max / (std + 1);
+    const diameter = 2 * Math.sqrt(area / Math.PI);
+
+    sizes.push(diameter);
+    snrs.push(snr);
+    logQuality(`P${idx + 1}: px直徑≈${diameter.toFixed(1)}, SNR≈${snr.toFixed(1)}`);
+  });
+
+  const avgSize = sizes.reduce((a, b) => a + b, 0) / sizes.length;
+  const avgSnr = snrs.reduce((a, b) => a + b, 0) / snrs.length;
+  ui.ledQuality.textContent = `平均直徑 ${avgSize.toFixed(1)} px, 平均SNR ${avgSnr.toFixed(1)}`;
+}
+
 function estimateIntrinsics() {
   const w = offscreen.width || 1280;
   const h = offscreen.height || 720;
@@ -908,6 +990,7 @@ ui.btnClear.addEventListener("click", clearRois);
 ui.btnDecode.addEventListener("click", toggleDecode);
 ui.btnLocClear.addEventListener("click", clearLocPoints);
 ui.btnLocSolve.addEventListener("click", solvePnP);
+ui.btnLedQuality.addEventListener("click", estimateLedQuality);
 ui.chkBgSub.addEventListener("change", (event) => {
   state.showBgSub = event.target.checked;
   state.bgModel = null;
