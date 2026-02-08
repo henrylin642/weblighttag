@@ -43,6 +43,7 @@ const state = {
   lastFrameTs: 0,
   fpsSamples: [],
   brightnessBuffers: [[], [], []],
+  smoothValues: [null, null, null],
   symbolStream: [],
   capturing: false,
   captureSymbols: [],
@@ -67,7 +68,7 @@ function setStatus(text) {
 function getConfig() {
   return {
     targetFps: Number(ui.cfgFps.value),
-    targetExposure: Number(ui.cfgExposure.value),
+    targetExposureUs: Number(ui.cfgExposure.value),
     targetIso: Number(ui.cfgIso.value),
     framesPerPacket: Number(ui.cfgFrames.value),
     bitsPerFrame: Number(ui.cfgBitsPerFrame.value),
@@ -112,7 +113,7 @@ async function startCamera() {
     await applySupportedConstraints(state.track, {
       frameRate: getConfig().targetFps,
       exposureMode: "manual",
-      exposureTime: getConfig().targetExposure,
+      exposureTime: getConfig().targetExposureUs / 1_000_000,
       iso: getConfig().targetIso,
       focusMode: "manual",
     }).catch(() => {
@@ -172,13 +173,16 @@ function updateDeviceInfo() {
   if (!state.track) return;
   const settings = state.track.getSettings();
   ui.infoFps.textContent = settings.frameRate ? `${settings.frameRate.toFixed(1)} fps` : "-";
-  ui.infoExposure.textContent = settings.exposureTime ? `${settings.exposureTime.toFixed(4)} sec` : "-";
+  ui.infoExposure.textContent = settings.exposureTime
+    ? `${Math.round(settings.exposureTime * 1_000_000)} us`
+    : "-";
   ui.infoIso.textContent = settings.iso ? String(settings.iso) : "-";
   ui.infoFocus.textContent = settings.focusMode || "-";
 
   const cfg = getConfig();
   const fpsOk = settings.frameRate && Math.abs(settings.frameRate - cfg.targetFps) <= 3;
-  const exposureOk = settings.exposureTime && settings.exposureTime <= cfg.targetExposure * 1.2;
+  const targetExposureSec = cfg.targetExposureUs / 1_000_000;
+  const exposureOk = settings.exposureTime && settings.exposureTime <= targetExposureSec * 1.2;
   const stableOk = !!settings.frameRate;
 
   if (fpsOk && exposureOk && stableOk) {
@@ -301,12 +305,24 @@ function updateBrightnessBuffers(values) {
   });
 }
 
-function computeThresholds() {
-  return state.brightnessBuffers.map((buf) => {
-    if (!buf.length) return 128;
+function computeNormalized(brightness) {
+  return brightness.map((value, idx) => {
+    const buf = state.brightnessBuffers[idx];
+    if (!buf.length) return 0;
     const min = Math.min(...buf);
     const max = Math.max(...buf);
-    return (min + max) / 2;
+    const denom = Math.max(1, max - min);
+    return (value - min) / denom;
+  });
+}
+
+function smoothNormalized(values) {
+  const alpha = 0.5;
+  return values.map((val, idx) => {
+    const prev = state.smoothValues[idx];
+    const next = prev === null ? val : prev * (1 - alpha) + val * alpha;
+    state.smoothValues[idx] = next;
+    return next;
   });
 }
 
@@ -424,11 +440,13 @@ function processFrame(ts) {
   offCtx.drawImage(ui.video, 0, 0, offscreen.width, offscreen.height);
   const brightness = state.rois.map((roi) => computeBrightness(roi));
   updateBrightnessBuffers(brightness);
-  const thresholds = computeThresholds();
+  const normalized = computeNormalized(brightness);
+  const smoothed = smoothNormalized(normalized);
+  const thresholds = [0.5, 0.5, 0.5];
 
-  const bits = brightness.map((value, i) => (value > thresholds[i] ? 1 : 0));
+  const bits = smoothed.map((value, i) => (value > thresholds[i] ? 1 : 0));
   const symbol = bits.reduce((acc, bit, idx) => acc | (bit << idx), 0);
-  updateLiveMetrics(brightness, thresholds, symbol);
+  updateLiveMetrics(brightness, smoothed, symbol);
 
   attemptDecode(symbol);
   requestNextFrame();
