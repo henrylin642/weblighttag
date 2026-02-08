@@ -231,8 +231,9 @@ function resizeCanvases() {
   ui.processed.height = rect.height;
   offscreen.width = ui.video.videoWidth || 1280;
   offscreen.height = ui.video.videoHeight || 720;
-  procCanvas.width = 160;
-  procCanvas.height = 90;
+  const scale = 0.25;
+  procCanvas.width = Math.max(1, Math.round(offscreen.width * scale));
+  procCanvas.height = Math.max(1, Math.round(offscreen.height * scale));
   state.bgModel = null;
 }
 
