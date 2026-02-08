@@ -279,6 +279,31 @@ function drawOverlay() {
   });
 }
 
+function getCoverRect(srcW, srcH, dstW, dstH) {
+  const srcAspect = srcW / srcH;
+  const dstAspect = dstW / dstH;
+  if (srcAspect > dstAspect) {
+    const sw = srcH * dstAspect;
+    const sx = (srcW - sw) / 2;
+    return { sx, sy: 0, sw, sh: srcH };
+  }
+  const sh = srcW / dstAspect;
+  const sy = (srcH - sh) / 2;
+  return { sx: 0, sy, sw: srcW, sh };
+}
+
+function mapOverlayToSource(roi) {
+  const srcW = offscreen.width;
+  const srcH = offscreen.height;
+  const dstW = ui.overlay.width;
+  const dstH = ui.overlay.height;
+  const { sx, sy, sw, sh } = getCoverRect(srcW, srcH, dstW, dstH);
+  const px = sx + roi.x * sw;
+  const py = sy + roi.y * sh;
+  const scale = (sw / dstW + sh / dstH) / 2;
+  return { px, py, scale };
+}
+
 function getRoiRects() {
   if (!state.rois.length || ui.overlay.width === 0) return [];
   const scale = procCanvas.width / ui.overlay.width;
@@ -309,7 +334,24 @@ function updateProcessedView() {
   ui.processed.style.mixBlendMode = enhance.onlyEnhanced ? "normal" : "screen";
   ui.video.style.opacity = enhance.onlyEnhanced ? "0" : "1";
 
-  procCtx.drawImage(ui.video, 0, 0, procCanvas.width, procCanvas.height);
+  offCtx.drawImage(ui.video, 0, 0, offscreen.width, offscreen.height);
+  const crop = getCoverRect(
+    offscreen.width,
+    offscreen.height,
+    ui.processed.width,
+    ui.processed.height
+  );
+  procCtx.drawImage(
+    offscreen,
+    crop.sx,
+    crop.sy,
+    crop.sw,
+    crop.sh,
+    0,
+    0,
+    procCanvas.width,
+    procCanvas.height
+  );
   const image = procCtx.getImageData(0, 0, procCanvas.width, procCanvas.height);
   const { data } = image;
   const length = procCanvas.width * procCanvas.height;
@@ -472,10 +514,25 @@ function autoDetectRois() {
   const candidates = points.filter((p) => p.brightness > mean + 20);
   candidates.sort((a, b) => b.brightness - a.brightness);
 
+  const crop = getCoverRect(
+    offscreen.width,
+    offscreen.height,
+    ui.overlay.width,
+    ui.overlay.height
+  );
+
   const selected = [];
   const minDist = offscreen.width * 0.08;
   for (const p of candidates) {
     if (selected.length >= 3) break;
+    if (
+      p.x < crop.sx ||
+      p.x > crop.sx + crop.sw ||
+      p.y < crop.sy ||
+      p.y > crop.sy + crop.sh
+    ) {
+      continue;
+    }
     const tooClose = selected.some((s) => {
       const dx = s.x - p.x;
       const dy = s.y - p.y;
@@ -486,8 +543,8 @@ function autoDetectRois() {
 
   if (selected.length === 3) {
     state.rois = selected.map((p) => ({
-      x: p.x / offscreen.width,
-      y: p.y / offscreen.height,
+      x: (p.x - crop.sx) / crop.sw,
+      y: (p.y - crop.sy) / crop.sh,
       size: state.roiSize,
     }));
     logLine("Auto detect succeeded.");
@@ -498,9 +555,10 @@ function autoDetectRois() {
 }
 
 function computeBrightness(roi) {
-  const x = Math.round(roi.x * offscreen.width);
-  const y = Math.round(roi.y * offscreen.height);
-  const size = roi.size;
+  const { px, py, scale } = mapOverlayToSource(roi);
+  const x = Math.round(px);
+  const y = Math.round(py);
+  const size = Math.max(4, Math.round(roi.size * scale));
   const half = Math.floor(size / 2);
   const startX = Math.max(0, x - half);
   const startY = Math.max(0, y - half);
