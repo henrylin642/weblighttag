@@ -13,6 +13,7 @@ const ui = {
   modeDataLed: document.getElementById("modeDataLed"),
   modeLocLed: document.getElementById("modeLocLed"),
   btnLocClear: document.getElementById("btnLocClear"),
+  btnLocAuto: document.getElementById("btnLocAuto"),
   btnLocSolve: document.getElementById("btnLocSolve"),
   cfgFx: document.getElementById("cfgFx"),
   cfgFy: document.getElementById("cfgFy"),
@@ -213,6 +214,7 @@ async function startCamera() {
     ui.chkBgSub.disabled = false;
     ui.chkEnhance.disabled = false;
     ui.btnLocClear.disabled = false;
+    ui.btnLocAuto.disabled = false;
     ui.btnLocSolve.disabled = false;
     ui.btnLedQuality.disabled = false;
 
@@ -248,6 +250,7 @@ function stopCamera() {
   ui.chkEnhance.disabled = true;
   ui.chkEnhance.checked = true;
   ui.btnLocClear.disabled = true;
+  ui.btnLocAuto.disabled = true;
   ui.btnLocSolve.disabled = true;
   ui.btnLedQuality.disabled = true;
   state.showBgSub = false;
@@ -656,6 +659,111 @@ function computeBlueDiffAt(x, y, size) {
   return { values, w, h, startX, startY };
 }
 
+function sortLocPoints(points) {
+  if (points.length !== 5) return points;
+  const sorted = [...points];
+  sorted.sort((a, b) => a.y - b.y);
+  const top = sorted.shift();
+  const rest = sorted;
+  const cx = rest.reduce((acc, p) => acc + p.x, 0) / rest.length;
+  const cy = rest.reduce((acc, p) => acc + p.y, 0) / rest.length;
+  const quad = { rt: null, rb: null, lb: null, lt: null };
+  rest.forEach((p) => {
+    const right = p.x >= cx;
+    const topQ = p.y <= cy;
+    if (right && topQ) quad.rt = p;
+    else if (right && !topQ) quad.rb = p;
+    else if (!right && !topQ) quad.lb = p;
+    else quad.lt = p;
+  });
+  const remaining = rest.filter((p) => !Object.values(quad).includes(p));
+  if (remaining.length) {
+    const byAngle = [...rest].sort(
+      (a, b) => Math.atan2(a.y - cy, a.x - cx) - Math.atan2(b.y - cy, b.x - cx)
+    );
+    quad.rt = quad.rt || byAngle[0];
+    quad.rb = quad.rb || byAngle[1];
+    quad.lb = quad.lb || byAngle[2];
+    quad.lt = quad.lt || byAngle[3];
+  }
+  return [quad.rt, quad.rb, quad.lb, quad.lt, top].filter(Boolean);
+}
+
+function autoDetectLocPoints() {
+  if (!ensureCvReady()) {
+    ui.locStatus.textContent = "OpenCV 尚未就緒";
+    return;
+  }
+  if (!state.stream) return;
+
+  offCtx.drawImage(ui.video, 0, 0, offscreen.width, offscreen.height);
+  const cropRaw = getCoverRect(
+    offscreen.width,
+    offscreen.height,
+    ui.overlay.width,
+    ui.overlay.height
+  );
+  const crop = {
+    sx: Math.round(cropRaw.sx),
+    sy: Math.round(cropRaw.sy),
+    sw: Math.round(cropRaw.sw),
+    sh: Math.round(cropRaw.sh),
+  };
+  const imgData = offCtx.getImageData(crop.sx, crop.sy, crop.sw, crop.sh);
+  const src = cv.matFromImageData(imgData);
+  const hsv = new cv.Mat();
+  cv.cvtColor(src, hsv, cv.COLOR_RGBA2RGB);
+  cv.cvtColor(hsv, hsv, cv.COLOR_RGB2HSV);
+
+  const lower = new cv.Mat(hsv.rows, hsv.cols, hsv.type(), [100, 80, 80, 0]);
+  const upper = new cv.Mat(hsv.rows, hsv.cols, hsv.type(), [130, 255, 255, 255]);
+  const mask = new cv.Mat();
+  cv.inRange(hsv, lower, upper, mask);
+
+  const kernel = cv.Mat.ones(3, 3, cv.CV_8U);
+  cv.morphologyEx(mask, mask, cv.MORPH_OPEN, kernel);
+
+  const contours = new cv.MatVector();
+  const hierarchy = new cv.Mat();
+  cv.findContours(mask, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+  const blobs = [];
+  for (let i = 0; i < contours.size(); i += 1) {
+    const cnt = contours.get(i);
+    const area = cv.contourArea(cnt);
+    if (area < 6) continue;
+    const m = cv.moments(cnt);
+    if (m.m00 === 0) continue;
+    const cx = m.m10 / m.m00;
+    const cy = m.m01 / m.m00;
+    blobs.push({ x: cx, y: cy, area });
+  }
+
+  blobs.sort((a, b) => b.area - a.area);
+  const top5 = blobs.slice(0, 5);
+  if (top5.length !== 5) {
+    ui.locStatus.textContent = "偵測到的藍燈不足 5 顆";
+  } else {
+    const normalized = top5.map((p) => ({
+      x: p.x / crop.sw,
+      y: p.y / crop.sh,
+    }));
+    const ordered = sortLocPoints(normalized);
+    state.locPoints = ordered;
+    ui.locStatus.textContent = "定位燈自動偵測完成";
+    drawOverlay();
+  }
+
+  src.delete();
+  hsv.delete();
+  lower.delete();
+  upper.delete();
+  mask.delete();
+  kernel.delete();
+  contours.delete();
+  hierarchy.delete();
+}
+
 function estimateLedQuality() {
   if (!state.stream) return;
   if (state.locPoints.length !== 5) {
@@ -989,6 +1097,7 @@ ui.btnAuto.addEventListener("click", autoDetectRois);
 ui.btnClear.addEventListener("click", clearRois);
 ui.btnDecode.addEventListener("click", toggleDecode);
 ui.btnLocClear.addEventListener("click", clearLocPoints);
+ui.btnLocAuto.addEventListener("click", autoDetectLocPoints);
 ui.btnLocSolve.addEventListener("click", solvePnP);
 ui.btnLedQuality.addEventListener("click", estimateLedQuality);
 ui.chkBgSub.addEventListener("change", (event) => {
