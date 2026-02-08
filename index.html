@@ -34,11 +34,33 @@
           </div>
           <div class="video-spacer"></div>
           <div class="video-actions">
-            <button id="btnStart">Start Camera</button>
-            <button id="btnStop" disabled>Stop</button>
-            <button id="btnAuto" disabled>Auto Detect LEDs</button>
-            <button id="btnClear" disabled>Clear Points</button>
-            <button id="btnDecode" disabled>Start Decode</button>
+            <button id="btnStart">啟動相機 Start Camera</button>
+            <button id="btnStop" disabled>停止 Stop</button>
+          </div>
+
+          <div class="hint" style="background: #1a3a52; padding: 12px; border-radius: 4px; margin: 8px 0;">
+            <strong>📍 6DoF定位模式 (5-LED)</strong><br>
+            1. 勾選「只顯示定位LED」→ 2. 點擊「開始自動偵測」→ 3. 查看位置和距離
+          </div>
+
+          <div class="video-actions">
+            <label class="toggle" style="background: #2a5a72; padding: 8px; border-radius: 4px;">
+              <input id="modeLocLed" name="clickMode" type="radio" />
+              <strong>只顯示定位LED (5-LED)</strong>
+            </label>
+            <label class="toggle">
+              <input id="modeDataLed" name="clickMode" type="radio" checked />
+              點選數據燈 (3-LED)
+            </label>
+          </div>
+
+          <div class="video-actions">
+            <button id="btnAuto" disabled>自動檢測數據燈</button>
+            <button id="btnClear" disabled>清除標記</button>
+            <button id="btnDecode" disabled>開始解碼</button>
+          </div>
+
+          <div class="video-actions">
             <label class="toggle">
               <input id="chkBgSub" type="checkbox" disabled />
               背景弱化視圖
@@ -47,17 +69,9 @@
               <input id="chkEnhance" type="checkbox" disabled checked />
               影像強化視圖
             </label>
-            <label class="toggle">
-              <input id="modeDataLed" name="clickMode" type="radio" checked />
-              點選數據燈
-            </label>
-            <label class="toggle">
-              <input id="modeLocLed" name="clickMode" type="radio" />
-              點選定位燈
-            </label>
           </div>
           <div class="hint">
-            Click three LED positions on the video, or use Auto Detect. Points are stored per session.
+            數據燈模式：點選三個LED位置，或使用自動檢測。
           </div>
         </section>
 
@@ -129,20 +143,24 @@
               <span id="valBgDim">0.40</span>
             </label>
           </div>
-          <div class="video-actions">
-            <button id="btnAutoHsv" disabled>自動校準 HSV</button>
-          </div>
         </section>
 
-        <section class="panel">
-          <h2>定位驗證 (5 藍燈)</h2>
-          <div class="hint">
-            切換「點選定位燈」，在畫面中依序點 5 顆藍燈。完成後點「計算定位」。
+        <section class="panel" style="background: linear-gradient(135deg, #1a3a52 0%, #2a4a62 100%); border: 2px solid #3a6a82;">
+          <h2>📍 6DoF定位系統 (5-LED藍燈)</h2>
+          <div class="hint" style="background: #2a5a72; padding: 12px; border-radius: 4px;">
+            <strong>使用步驟：</strong><br>
+            1️⃣ 將5-LED設備放在畫面中（2-3公尺距離）<br>
+            2️⃣ 點擊「自動校準HSV」調整藍光檢測<br>
+            3️⃣ 點擊「開始自動偵測」開始定位<br>
+            4️⃣ 查看下方的位置、旋轉、距離信息
           </div>
           <div class="video-actions">
+            <button id="btnAutoHsv" disabled style="background: #2a7a52; font-weight: bold;">🎨 自動校準 HSV</button>
+          </div>
+          <div class="video-actions">
+            <button id="btnLocAuto" disabled style="background: #2a6a92; font-size: 16px; font-weight: bold;">🎯 開始自動偵測</button>
             <button id="btnLocClear" disabled>清除定位點</button>
-            <button id="btnLocAuto" disabled>開始自動偵測</button>
-            <button id="btnLocSolve" disabled>計算定位</button>
+            <button id="btnLocSolve" disabled>手動計算定位</button>
           </div>
           <div class="config-grid">
             <label>fx

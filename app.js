@@ -1753,36 +1753,73 @@ function autoCalibrateHsv() {
   const sats = [];
   const vals = [];
   const data = hsv.data;
+
+  // 先用藍光差分找出可能的藍色LED區域
+  const imgDataRaw = offCtx.getImageData(crop.sx, crop.sy, crop.sw, crop.sh);
+  const rawData = imgDataRaw.data;
+
   for (let i = 0; i < total; i += step) {
     const idx = i * 3;
+    const idx4 = i * 4;
+
+    // 藍光差分過濾
+    const r = rawData[idx4];
+    const g = rawData[idx4 + 1];
+    const b = rawData[idx4 + 2];
+    const blueDiff = b - (r + g) / 2;
+
+    // 只採樣藍光差分值高的像素
+    if (blueDiff < 30) continue;
+
     const h = data[idx];
     const s = data[idx + 1];
     const v = data[idx + 2];
-    if (s < 50 || v < 40) continue;
-    if (h >= 95 && h <= 140) {
+
+    // 放寬飽和度和明度要求
+    if (s < 30 || v < 30) continue;
+
+    // 藍色範圍：OpenCV HSV中 100-145 對應 360度中的 200-290度
+    if (h >= 100 && h <= 145) {
       hues.push(h);
       sats.push(s);
       vals.push(v);
     }
   }
 
-  if (hues.length < 20) {
-    ui.locStatus.textContent = "HSV 校準失敗：藍燈不足";
+  if (hues.length < 10) {
+    ui.locStatus.textContent = `HSV 校準失敗：藍燈像素不足 (${hues.length})`;
+    logLine(`HSV校準失敗：只找到${hues.length}個藍色像素，需要至少10個`);
   } else {
     hues.sort((a, b) => a - b);
     sats.sort((a, b) => a - b);
     vals.sort((a, b) => a - b);
     const p = (arr, q) => arr[Math.floor((arr.length - 1) * q)];
-    const hMin = Math.max(0, p(hues, 0.05));
-    const hMax = Math.min(179, p(hues, 0.95));
-    const sMin = p(sats, 0.2) / 255;
-    const vMin = p(vals, 0.2) / 255;
+
+    // 使用更寬鬆的百分位數
+    const hMin = Math.max(0, p(hues, 0.10));  // 10%
+    const hMax = Math.min(179, p(hues, 0.90)); // 90%
+    const sMin = Math.max(0, p(sats, 0.15) / 255);  // 15%
+    const vMin = Math.max(0, p(vals, 0.15) / 255);  // 15%
+
+    // 轉換到360度範圍
     ui.cfgHueMin.value = Math.round((hMin / 179) * 360);
     ui.cfgHueMax.value = Math.round((hMax / 179) * 360);
-    ui.cfgSatMin.value = Math.min(1, Math.max(0, sMin)).toFixed(2);
-    ui.cfgValMin.value = Math.min(1, Math.max(0, vMin)).toFixed(2);
+    ui.cfgSatMin.value = Math.min(1, sMin).toFixed(2);
+    ui.cfgValMin.value = Math.min(1, vMin).toFixed(2);
     updateEnhanceLabels();
-    ui.locStatus.textContent = "HSV 校準完成";
+
+    // 更新定位器HSV參數
+    if (state.localizer) {
+      state.localizer.updateHSVParams({
+        hMin: Number(ui.cfgHueMin.value),
+        hMax: Number(ui.cfgHueMax.value),
+        sMin: Number(ui.cfgSatMin.value),
+        vMin: Number(ui.cfgValMin.value)
+      });
+    }
+
+    ui.locStatus.textContent = `HSV 校準完成 (${hues.length} 藍色像素)`;
+    logLine(`HSV校準：H(${ui.cfgHueMin.value}-${ui.cfgHueMax.value}), S(${ui.cfgSatMin.value}), V(${ui.cfgValMin.value})`);
   }
 
   src.delete();
