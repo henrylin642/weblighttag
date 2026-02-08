@@ -148,14 +148,24 @@
         <section class="panel" style="background: linear-gradient(135deg, #1a3a52 0%, #2a4a62 100%); border: 2px solid #3a6a82;">
           <h2>📍 6DoF定位系統 (5-LED藍燈)</h2>
           <div class="hint" style="background: #2a5a72; padding: 12px; border-radius: 4px;">
-            <strong>使用步驟：</strong><br>
-            1️⃣ 將5-LED設備放在畫面中（2-3公尺距離）<br>
-            2️⃣ 點擊「自動校準HSV」調整藍光檢測<br>
-            3️⃣ 點擊「開始自動偵測」開始定位<br>
-            4️⃣ 查看下方的位置、旋轉、距離信息
+            <strong>🚀 快速使用（智能檢測）：</strong><br>
+            1️⃣ 將5-LED設備對準畫面中心（2-3公尺）<br>
+            2️⃣ 點擊「🎯 開始自動偵測」立即定位<br>
+            3️⃣ 查看位置、距離信息<br>
+            <br>
+            <strong>💡 提示：</strong>使用固定參數+ROI智能檢測，無需手動校準
+          </div>
+          <div class="config-grid">
+            <label>環境模式
+              <select id="cfgEnvMode" disabled>
+                <option value="dark">暗環境 (閾值35)</option>
+                <option value="normal" selected>正常室內 (閾值40)</option>
+                <option value="bright">明亮環境 (閾值50)</option>
+              </select>
+            </label>
           </div>
           <div class="video-actions">
-            <button id="btnAutoHsv" disabled style="background: #2a7a52; font-weight: bold;">🎨 自動校準 HSV</button>
+            <button id="btnAutoHsv" disabled style="background: #2a7a52; font-weight: bold; display: none;">🎨 自動校準 HSV</button>
           </div>
           <div class="video-actions">
             <button id="btnLocAuto" disabled style="background: #2a6a92; font-size: 16px; font-weight: bold;">🎯 開始自動偵測</button>

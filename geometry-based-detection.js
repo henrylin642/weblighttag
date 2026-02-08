@@ -7,14 +7,22 @@
  * 主檢測函數：基於幾何結構的候選點篩選
  *
  * 工作流程：
- * 1. 檢測所有藍色候選點（可能10-20個）
+ * 1. 檢測所有藍色候選點（ROI限制 + Top-10篩選）
  * 2. 顯示所有候選點（灰色標記）
  * 3. 從候選點中找出符合5-LED幾何結構的組合
  * 4. 只高亮符合結構的5個點
  * 5. 對匹配的5個點進行PnP求解
+ *
+ * @param {Object} options - 可選配置參數
+ * @param {string} options.envMode - 環境模式: 'dark'|'normal'|'bright'
  */
-function geometryBasedDetect(offCtx, crop, offscreen) {
+function geometryBasedDetect(offCtx, crop, offscreen, options = {}) {
+  // 環境參數配置
+  const envMode = options.envMode || 'normal';
+  window._detectionEnvMode = envMode;  // 傳遞給檢測函數
+
   // ===== 階段1: 檢測所有藍色候選點 =====
+  console.log(`[幾何檢測] 環境模式: ${envMode}`);
   const imgData = offCtx.getImageData(crop.sx, crop.sy, crop.sw, crop.sh);
   const candidates = detectBlueCandidates(imgData, crop, offscreen);
 
@@ -63,16 +71,27 @@ function geometryBasedDetect(offCtx, crop, offscreen) {
 
 /**
  * 檢測所有藍色候選點
- * 使用藍光差分 + 自適應閾值
+ * 方案3優化：固定參數 + ROI限制 + Top-N篩選 + 增強濾波
  */
 function detectBlueCandidates(imgData, crop, offscreen) {
   const srcMat = cv.matFromImageData(imgData);
   const candidates = [];
 
   try {
-    // 藍光差分
+    // ===== 優化1: ROI中心限制（70%區域）=====
+    const roiScale = 0.70;
+    const roiW = Math.round(crop.sw * roiScale);
+    const roiH = Math.round(crop.sh * roiScale);
+    const roiX = Math.round((crop.sw - roiW) / 2);
+    const roiY = Math.round((crop.sh - roiH) / 2);
+
+    const roi = srcMat.roi(new cv.Rect(roiX, roiY, roiW, roiH));
+
+    console.log(`ROI限制: ${roiW}×${roiH} (中心${Math.round(roiScale*100)}%)`);
+
+    // ===== 優化2: 藍光差分（固定閾值）=====
     const channels = new cv.MatVector();
-    cv.split(srcMat, channels);
+    cv.split(roi, channels);
     const B = channels.get(2);
     const G = channels.get(1);
     const R = channels.get(0);
@@ -85,50 +104,47 @@ function detectBlueCandidates(imgData, crop, offscreen) {
     const blueDiff = new cv.Mat();
     cv.subtract(B, RG_avg, blueDiff);
 
-    // 自適應閾值計算
-    const hist = new Uint32Array(256);
-    for (let i = 0; i < blueDiff.rows * blueDiff.cols; i++) {
-      hist[blueDiff.data[i]]++;
-    }
+    // 根據環境模式選擇閾值
+    const envMode = window._detectionEnvMode || 'normal';
+    const thresholds = {
+      dark: 35,     // 暗環境
+      normal: 40,   // 正常室內
+      bright: 50    // 明亮環境
+    };
+    const thresh = thresholds[envMode] || 40;
+    console.log(`藍光差分閾值: ${thresh} (${envMode}模式)`);
 
-    let cum = 0;
-    let thresh = 40;
-    const target = blueDiff.rows * blueDiff.cols * 0.995;  // 99.5%
-    for (let i = 0; i < 256; i++) {
-      cum += hist[i];
-      if (cum >= target) {
-        thresh = Math.max(25, i);  // 最低25
-        break;
-      }
-    }
-
-    console.log(`藍光差分閾值: ${thresh}`);
+    // 計算平均亮度用於診斷
+    const meanVal = cv.mean(blueDiff)[0];
+    console.log(`藍光差分平均值: ${meanVal.toFixed(1)}`);
 
     // 二值化
     const mask = new cv.Mat();
     cv.threshold(blueDiff, mask, thresh, 255, cv.THRESH_BINARY);
 
-    // 形態學濾波（去除小雜點）
-    const kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(3, 3));
-    cv.morphologyEx(mask, mask, cv.MORPH_OPEN, kernel);
-    cv.morphologyEx(mask, mask, cv.MORPH_CLOSE, kernel);
+    // ===== 優化3: 增強形態學濾波（5×5 kernel）=====
+    const kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(5, 5));
+    cv.morphologyEx(mask, mask, cv.MORPH_OPEN, kernel);   // 去除小雜點
+    cv.morphologyEx(mask, mask, cv.MORPH_CLOSE, kernel);  // 填充孔洞
+    cv.morphologyEx(mask, mask, cv.MORPH_OPEN, kernel);   // 再次平滑
 
     // 輪廓檢測
     const contours = new cv.MatVector();
     const hierarchy = new cv.Mat();
     cv.findContours(mask, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
-    console.log(`找到 ${contours.size()} 個輪廓`);
+    console.log(`ROI內找到 ${contours.size()} 個輪廓`);
 
-    const centerX = crop.sw / 2;
-    const centerY = crop.sh / 2;
+    const centerX = roiW / 2;
+    const centerY = roiH / 2;
 
+    // 收集所有候選點（含亮度信息）
     for (let i = 0; i < contours.size(); i++) {
       const cnt = contours.get(i);
       const area = cv.contourArea(cnt);
 
-      // 面積過濾
-      if (area < 3 || area > 1000) continue;
+      // 面積過濾（10-500 px²）
+      if (area < 10 || area > 500) continue;
 
       const m = cv.moments(cnt);
       if (m.m00 === 0) continue;
@@ -142,18 +158,33 @@ function detectBlueCandidates(imgData, crop, offscreen) {
       const circularity = peri === 0 ? 0 : (4 * Math.PI * area) / (peri * peri);
 
       // 放寬圓度要求
-      if (circularity < 0.25) continue;
+      if (circularity < 0.20) continue;
+
+      // 計算該點的藍光差分亮度（用於Top-N排序）
+      const px = Math.round(cx);
+      const py = Math.round(cy);
+      const brightness = (px >= 0 && px < roiW && py >= 0 && py < roiH)
+        ? blueDiff.data[py * roiW + px]
+        : 0;
 
       const dist = Math.hypot(cx - centerX, cy - centerY);
 
       candidates.push({
-        x: (cx + crop.sx) / offscreen.width,
-        y: (cy + crop.sy) / offscreen.height,
+        x: (cx + roiX + crop.sx) / offscreen.width,  // 轉換回原始座標
+        y: (cy + roiY + crop.sy) / offscreen.height,
         area: area,
         circularity: circularity,
-        dist: dist
+        dist: dist,
+        brightness: brightness  // 新增亮度信息
       });
     }
+
+    // ===== 優化4: Top-N最亮點篩選 =====
+    // 先按亮度排序，取Top-10
+    candidates.sort((a, b) => b.brightness - a.brightness);
+    const topN = candidates.slice(0, 10);
+
+    console.log(`Top-10最亮點篩選完成 (從 ${candidates.length} 個候選點)`);
 
     // 清理
     R.delete(); G.delete(); B.delete();
@@ -161,15 +192,14 @@ function detectBlueCandidates(imgData, crop, offscreen) {
     blueDiff.delete(); mask.delete();
     kernel.delete(); contours.delete();
     hierarchy.delete(); channels.delete();
+    roi.delete();
 
   } finally {
     srcMat.delete();
   }
 
-  // 按面積排序
-  candidates.sort((a, b) => b.area - a.area);
-
-  return candidates;
+  // 返回Top-N點（按亮度已排序）
+  return topN;
 }
 
 /**

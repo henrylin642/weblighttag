@@ -575,6 +575,7 @@ const ui = {
   valSatMin: document.getElementById("valSatMin"),
   valValMin: document.getElementById("valValMin"),
   btnAutoHsv: document.getElementById("btnAutoHsv"),
+  cfgEnvMode: document.getElementById("cfgEnvMode"),
 };
 
 const state = {
@@ -1496,8 +1497,9 @@ function autoDetectWithEnhancedLocalizer() {
     sh: Math.round(cropRaw.sh),
   };
 
-  // 使用基於幾何結構的檢測
-  const result = geometryBasedDetect(offCtx, crop, offscreen);
+  // 使用基於幾何結構的檢測（方案3優化版）
+  const envMode = ui.cfgEnvMode ? ui.cfgEnvMode.value : 'normal';
+  const result = geometryBasedDetect(offCtx, crop, offscreen, { envMode });
 
   // 保存候選點用於顯示診斷信息
   state.locCandidates = result.candidates || [];
