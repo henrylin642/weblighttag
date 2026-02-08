@@ -590,6 +590,7 @@ const state = {
   showBgSub: false,
   bgModel: null,
   locPoints: [],
+  locCandidates: [],  // 新增：所有候選LED點（用於診斷顯示）
   cvReady: false,
   autoLocating: false,
   trackPoints: null,
@@ -603,6 +604,8 @@ const state = {
   qualityLines: [],
   localizer: null,  // 新增：6DoF定位器實例
   useEnhancedLocalizer: true,  // 新增：使用增強版定位器
+  kalmanFilters: {},  // 新增：卡爾曼濾波器
+  pnpSolver: null,  // 新增：PnP求解器
 };
 
 const offscreen = document.createElement("canvas");
@@ -869,7 +872,25 @@ function drawOverlay() {
     overlayCtx.fillText(`LED ${idx + 1}`, x + 10, y - 10);
   });
 
-  // 繪製定位LED（5-LED系統）
+  // 繪製定位LED系統
+  // 第一階段：繪製所有候選點（灰色小圓圈）用於診斷
+  if (state.locCandidates && state.locCandidates.length > 0) {
+    overlayCtx.fillStyle = 'rgba(128, 128, 128, 0.4)';
+    overlayCtx.strokeStyle = '#666';
+    overlayCtx.lineWidth = 1;
+
+    state.locCandidates.forEach((pt) => {
+      const x = pt.x * ui.overlay.width;
+      const y = pt.y * ui.overlay.height;
+
+      overlayCtx.beginPath();
+      overlayCtx.arc(x, y, 4, 0, Math.PI * 2);
+      overlayCtx.fill();
+      overlayCtx.stroke();
+    });
+  }
+
+  // 第二階段：繪製匹配成功的5個LED（彩色，覆蓋在候選點上方）
   if (state.locPoints.length === 5) {
     // 根據ID繪製不同顏色
     state.locPoints.forEach((pt) => {
@@ -931,19 +952,6 @@ function drawOverlay() {
         overlayCtx.setLineDash([]);
       }
     }
-  } else if (state.locPoints.length > 0) {
-    // 未匹配的點（灰色顯示）
-    state.locPoints.forEach((pt, idx) => {
-      const x = pt.x * ui.overlay.width;
-      const y = pt.y * ui.overlay.height;
-      overlayCtx.strokeStyle = "#888";
-      overlayCtx.lineWidth = 2;
-      overlayCtx.beginPath();
-      overlayCtx.arc(x, y, 6, 0, Math.PI * 2);
-      overlayCtx.stroke();
-      overlayCtx.fillStyle = "#888";
-      overlayCtx.fillText(`?${idx + 1}`, x + 8, y - 8);
-    });
   }
 }
 
@@ -1488,33 +1496,56 @@ function autoDetectWithEnhancedLocalizer() {
     sh: Math.round(cropRaw.sh),
   };
 
-  const imgData = offCtx.getImageData(crop.sx, crop.sy, crop.sw, crop.sh);
-  const srcMat = cv.matFromImageData(imgData);
+  // 使用基於幾何結構的檢測
+  const result = geometryBasedDetect(offCtx, crop, offscreen);
 
-  // 更新HSV參數到定位器
-  state.localizer.updateHSVParams({
-    hMin: Number(ui.cfgHueMin.value),
-    hMax: Number(ui.cfgHueMax.value),
-    sMin: Number(ui.cfgSatMin.value),
-    vMin: Number(ui.cfgValMin.value)
-  });
-
-  // 處理檢測
-  const result = state.localizer.process(srcMat, crop);
-
-  srcMat.delete();
+  // 保存候選點用於顯示診斷信息
+  state.locCandidates = result.candidates || [];
 
   if (result.success) {
-    state.locPoints = result.points;
-    startTracking(result.points);
+    // 應用卡爾曼濾波器平滑點位
+    const smoothedPoints = result.points.map(p => {
+      if (!state.kalmanFilters) state.kalmanFilters = {};
+      if (!state.kalmanFilters[p.id]) {
+        state.kalmanFilters[p.id] = new SimpleKalman();
+      }
+      const smoothed = state.kalmanFilters[p.id].update(p.x, p.y);
+      return { ...p, x: smoothed.x, y: smoothed.y };
+    });
 
-    // 更新UI
-    updateLocalizationUI(result);
-    drawOverlay();
+    state.locPoints = smoothedPoints;
+    startTracking(smoothedPoints);
 
-    ui.locStatus.textContent = `定位成功 | 穩定性: ${(result.stability * 100).toFixed(0)}%`;
+    // 計算PnP姿態
+    if (!state.pnpSolver) {
+      state.pnpSolver = new PnPSolver();
+    }
+    const poseResult = state.pnpSolver.solve(smoothedPoints);
+
+    if (poseResult.success) {
+      // 更新UI
+      updateLocalizationUI({
+        pose: poseResult.pose,
+        points: smoothedPoints,
+        metrics: result.metrics,
+        stability: 0.85
+      });
+
+      drawOverlay();
+
+      // 顯示診斷信息
+      const candidateCount = result.totalCandidates || result.candidates.length;
+      ui.locStatus.textContent = `✅ 定位成功 | 候選: ${candidateCount} → 有效: 5 | 評分: ${result.score.toFixed(1)}`;
+    } else {
+      ui.locStatus.textContent = `PnP求解失敗: ${poseResult.error}`;
+    }
   } else {
-    ui.locStatus.textContent = `檢測失敗: ${result.error}`;
+    // 顯示失敗原因和候選點數量
+    const candidateCount = result.candidates ? result.candidates.length : 0;
+    ui.locStatus.textContent = `❌ ${result.error} (候選點: ${candidateCount})`;
+
+    // 仍然繪製候選點用於診斷
+    drawOverlay();
   }
 }
 

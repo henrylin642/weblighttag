@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nfeat: 整合完整6DoF定位系統\n\n## 主要功能\n- 新增5個核心類別：BlueLEDDetector, GeometryMatcher, SimpleKalman, PnPSolver, LED6DoFLocalizer\n- 實現藍光差分濾波 + HSV組合檢測算法\n- 整合卡爾曼濾波實現時間域平滑追蹤\n- 增強版PnP求解器計算6DoF相機姿態\n- 自動幾何匹配和ID分配（1-4矩形，5突出點）\n\n## UI改進\n- LED可視化顏色編碼（藍色1-4，綠色5）\n- 幾何連線繪製（矩形+虛線到突出點）\n- 即時定位信息顯示（位置、旋轉、距離、穩定性）\n- HSV參數自動更新到定位器\n\n## 新增文檔\n- 6DoF-INTEGRATION-GUIDE.md：完整使用指南\n- TESTING-CHECKLIST.md：25個測試案例清單\n- ref/：測試參考截圖\n\n## 技術細節\n- 藍光檢測：B-\\(R+G\\)/2 + HSV雙重過濾\n- 幾何驗證：矩形比例容差25%\n- 卡爾曼濾波：processNoise=0.01, measurementNoise=1.0\n- 性能目標：15-30 FPS, ±10cm@3m, >95%成功率\n\nCo-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git push:*)",
+      "Bash(git commit:*)"
+    ]
+  }
+}
