@@ -187,6 +187,14 @@
         <section class="panel">
           <h2>Decoder Config</h2>
           <div class="config-grid">
+            <label>Target Resolution
+              <select id="cfgRes">
+                <option value="1280x720">1280x720</option>
+                <option value="1920x1080" selected>1920x1080</option>
+                <option value="2560x1440">2560x1440</option>
+                <option value="3840x2160">3840x2160 (4K)</option>
+              </select>
+            </label>
             <label>Target FPS
               <input id="cfgFps" type="number" min="10" max="60" value="25" />
             </label>

@@ -45,6 +45,7 @@ const ui = {
   decodeId: document.getElementById("decodeId"),
   decodeCrc: document.getElementById("decodeCrc"),
   log: document.getElementById("log"),
+  cfgRes: document.getElementById("cfgRes"),
   cfgFps: document.getElementById("cfgFps"),
   cfgExposure: document.getElementById("cfgExposure"),
   cfgIso: document.getElementById("cfgIso"),
@@ -143,7 +144,10 @@ function getEnhanceConfig() {
 }
 
 function getConfig() {
+  const [w, h] = ui.cfgRes.value.split("x").map((v) => Number(v));
   return {
+    targetWidth: w,
+    targetHeight: h,
     targetFps: Number(ui.cfgFps.value),
     targetExposureUs: Number(ui.cfgExposure.value),
     targetIso: Number(ui.cfgIso.value),
@@ -177,8 +181,8 @@ async function startCamera() {
     const stream = await navigator.mediaDevices.getUserMedia({
       video: {
         facingMode: "environment",
-        width: { ideal: 1280 },
-        height: { ideal: 720 },
+        width: { ideal: getConfig().targetWidth },
+        height: { ideal: getConfig().targetHeight },
         frameRate: { ideal: getConfig().targetFps, max: 60 },
       },
       audio: false,
