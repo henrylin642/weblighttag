@@ -65,6 +65,8 @@ const ui = {
   chkHighPass: document.getElementById("chkHighPass"),
   cfgHighPass: document.getElementById("cfgHighPass"),
   chkRoiStretch: document.getElementById("chkRoiStretch"),
+  chkBlueMask: document.getElementById("chkBlueMask"),
+  chkMaskOnly: document.getElementById("chkMaskOnly"),
   chkOnlyEnhance: document.getElementById("chkOnlyEnhance"),
   cfgBgDim: document.getElementById("cfgBgDim"),
   valBrightness: document.getElementById("valBrightness"),
@@ -72,6 +74,14 @@ const ui = {
   valGamma: document.getElementById("valGamma"),
   valHighPass: document.getElementById("valHighPass"),
   valBgDim: document.getElementById("valBgDim"),
+  cfgHueMin: document.getElementById("cfgHueMin"),
+  cfgHueMax: document.getElementById("cfgHueMax"),
+  cfgSatMin: document.getElementById("cfgSatMin"),
+  cfgValMin: document.getElementById("cfgValMin"),
+  valHueMin: document.getElementById("valHueMin"),
+  valHueMax: document.getElementById("valHueMax"),
+  valSatMin: document.getElementById("valSatMin"),
+  valValMin: document.getElementById("valValMin"),
 };
 
 const state = {
@@ -126,6 +136,10 @@ function updateEnhanceLabels() {
   ui.valGamma.textContent = Number(ui.cfgGamma.value).toFixed(2);
   ui.valHighPass.textContent = Number(ui.cfgHighPass.value).toFixed(1);
   ui.valBgDim.textContent = Number(ui.cfgBgDim.value).toFixed(2);
+  ui.valHueMin.textContent = Number(ui.cfgHueMin.value).toFixed(0);
+  ui.valHueMax.textContent = Number(ui.cfgHueMax.value).toFixed(0);
+  ui.valSatMin.textContent = Number(ui.cfgSatMin.value).toFixed(2);
+  ui.valValMin.textContent = Number(ui.cfgValMin.value).toFixed(2);
 }
 
 function getEnhanceConfig() {
@@ -139,6 +153,12 @@ function getEnhanceConfig() {
     highPassGain: Number(ui.cfgHighPass.value),
     roiStretch: ui.chkRoiStretch.checked,
     onlyEnhanced: ui.chkOnlyEnhance.checked,
+    blueMask: ui.chkBlueMask.checked,
+    maskOnly: ui.chkMaskOnly.checked,
+    hueMin: Number(ui.cfgHueMin.value),
+    hueMax: Number(ui.cfgHueMax.value),
+    satMin: Number(ui.cfgSatMin.value),
+    valMin: Number(ui.cfgValMin.value),
     bgDim: Number(ui.cfgBgDim.value),
   };
 }
@@ -410,6 +430,7 @@ function updateProcessedView() {
   const { data } = image;
   const length = procCanvas.width * procCanvas.height;
   const gray = new Float32Array(length);
+  const mask = new Uint8Array(length);
 
   for (let i = 0; i < length; i += 1) {
     const idx = i * 4;
@@ -432,6 +453,31 @@ function updateProcessedView() {
         break;
     }
     gray[i] = v;
+  }
+
+  if (enhance.blueMask) {
+    for (let i = 0; i < length; i += 1) {
+      const idx = i * 4;
+      const r = data[idx] / 255;
+      const g = data[idx + 1] / 255;
+      const b = data[idx + 2] / 255;
+      const max = Math.max(r, g, b);
+      const min = Math.min(r, g, b);
+      const delta = max - min;
+      let h = 0;
+      if (delta !== 0) {
+        if (max === r) h = ((g - b) / delta) % 6;
+        else if (max === g) h = (b - r) / delta + 2;
+        else h = (r - g) / delta + 4;
+        h *= 60;
+        if (h < 0) h += 360;
+      }
+      const s = max === 0 ? 0 : delta / max;
+      const v = max;
+      const inHue = h >= enhance.hueMin && h <= enhance.hueMax;
+      const ok = inHue && s >= enhance.satMin && v >= enhance.valMin;
+      mask[i] = ok ? 255 : 0;
+    }
   }
 
   if (state.showBgSub) {
@@ -489,6 +535,13 @@ function updateProcessedView() {
 
   for (let i = 0; i < length; i += 1) {
     let v = gray[i];
+    if (enhance.blueMask) {
+      if (enhance.maskOnly) {
+        v = mask[i];
+      } else if (mask[i] === 0) {
+        v *= enhance.bgDim;
+      }
+    }
     if (enhance.roiStretch && roiRects.length) {
       const x = i % procCanvas.width;
       const y = Math.floor(i / procCanvas.width);
@@ -1118,6 +1171,12 @@ ui.chkBgSub.addEventListener("change", (event) => {
     ui.cfgChannel,
     ui.chkHighPass,
     ui.chkRoiStretch,
+    ui.chkBlueMask,
+    ui.chkMaskOnly,
+    ui.cfgHueMin,
+    ui.cfgHueMax,
+    ui.cfgSatMin,
+    ui.cfgValMin,
     ui.chkOnlyEnhance,
     ui.chkEnhance,
   ].forEach((el) => {

@@ -97,8 +97,32 @@
               ROI 對比拉伸
             </label>
             <label>
+              <input id="chkBlueMask" type="checkbox" />
+              藍燈遮罩
+            </label>
+            <label>
+              <input id="chkMaskOnly" type="checkbox" />
+              只顯示遮罩
+            </label>
+            <label>
               <input id="chkOnlyEnhance" type="checkbox" checked />
               只顯示強化畫面
+            </label>
+            <label>Hue Min
+              <input id="cfgHueMin" type="range" min="180" max="260" step="1" value="210" />
+              <span id="valHueMin">210</span>
+            </label>
+            <label>Hue Max
+              <input id="cfgHueMax" type="range" min="180" max="260" step="1" value="250" />
+              <span id="valHueMax">250</span>
+            </label>
+            <label>Sat Min
+              <input id="cfgSatMin" type="range" min="0" max="1" step="0.01" value="0.4" />
+              <span id="valSatMin">0.40</span>
+            </label>
+            <label>Val Min
+              <input id="cfgValMin" type="range" min="0" max="1" step="0.01" value="0.35" />
+              <span id="valValMin">0.35</span>
             </label>
             <label>背景暗化
               <input id="cfgBgDim" type="range" min="0" max="1" step="0.05" value="0.4" />
