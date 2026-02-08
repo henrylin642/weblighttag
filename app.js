@@ -82,6 +82,7 @@ const ui = {
   valHueMax: document.getElementById("valHueMax"),
   valSatMin: document.getElementById("valSatMin"),
   valValMin: document.getElementById("valValMin"),
+  btnAutoHsv: document.getElementById("btnAutoHsv"),
 };
 
 const state = {
@@ -246,6 +247,7 @@ async function startCamera() {
     ui.btnLocAuto.disabled = false;
     ui.btnLocSolve.disabled = false;
     ui.btnLedQuality.disabled = false;
+    ui.btnAutoHsv.disabled = false;
 
     estimateIntrinsics();
 
@@ -282,6 +284,7 @@ function stopCamera() {
   ui.btnLocAuto.disabled = true;
   ui.btnLocSolve.disabled = true;
   ui.btnLedQuality.disabled = true;
+  ui.btnAutoHsv.disabled = true;
   state.autoLocating = false;
   ui.btnLocAuto.textContent = "開始自動偵測";
   state.showBgSub = false;
@@ -1025,6 +1028,63 @@ function estimateLedQuality() {
   ui.ledQuality.textContent = `平均直徑 ${avgSize.toFixed(1)} px, 平均SNR ${avgSnr.toFixed(1)}`;
 }
 
+function autoCalibrateHsv() {
+  if (!state.stream) return;
+  offCtx.drawImage(ui.video, 0, 0, offscreen.width, offscreen.height);
+  const crop = getCoverRect(
+    offscreen.width,
+    offscreen.height,
+    ui.overlay.width,
+    ui.overlay.height
+  );
+  const imgData = offCtx.getImageData(crop.sx, crop.sy, crop.sw, crop.sh);
+  const src = cv.matFromImageData(imgData);
+  const hsv = new cv.Mat();
+  cv.cvtColor(src, hsv, cv.COLOR_RGBA2RGB);
+  cv.cvtColor(hsv, hsv, cv.COLOR_RGB2HSV);
+
+  const total = hsv.rows * hsv.cols;
+  const step = Math.max(1, Math.floor(total / 12000));
+  const hues = [];
+  const sats = [];
+  const vals = [];
+  const data = hsv.data;
+  for (let i = 0; i < total; i += step) {
+    const idx = i * 3;
+    const h = data[idx];
+    const s = data[idx + 1];
+    const v = data[idx + 2];
+    if (s < 50 || v < 40) continue;
+    if (h >= 95 && h <= 140) {
+      hues.push(h);
+      sats.push(s);
+      vals.push(v);
+    }
+  }
+
+  if (hues.length < 20) {
+    ui.locStatus.textContent = "HSV 校準失敗：藍燈不足";
+  } else {
+    hues.sort((a, b) => a - b);
+    sats.sort((a, b) => a - b);
+    vals.sort((a, b) => a - b);
+    const p = (arr, q) => arr[Math.floor((arr.length - 1) * q)];
+    const hMin = Math.max(0, p(hues, 0.05));
+    const hMax = Math.min(179, p(hues, 0.95));
+    const sMin = p(sats, 0.2) / 255;
+    const vMin = p(vals, 0.2) / 255;
+    ui.cfgHueMin.value = Math.round((hMin / 179) * 360);
+    ui.cfgHueMax.value = Math.round((hMax / 179) * 360);
+    ui.cfgSatMin.value = Math.min(1, Math.max(0, sMin)).toFixed(2);
+    ui.cfgValMin.value = Math.min(1, Math.max(0, vMin)).toFixed(2);
+    updateEnhanceLabels();
+    ui.locStatus.textContent = "HSV 校準完成";
+  }
+
+  src.delete();
+  hsv.delete();
+}
+
 function estimateIntrinsics() {
   const w = offscreen.width || 1280;
   const h = offscreen.height || 720;
@@ -1320,6 +1380,7 @@ ui.btnLocClear.addEventListener("click", clearLocPoints);
 ui.btnLocAuto.addEventListener("click", toggleAutoLocating);
 ui.btnLocSolve.addEventListener("click", solvePnP);
 ui.btnLedQuality.addEventListener("click", estimateLedQuality);
+ui.btnAutoHsv.addEventListener("click", autoCalibrateHsv);
 ui.chkBgSub.addEventListener("change", (event) => {
   state.showBgSub = event.target.checked;
   state.bgModel = null;
