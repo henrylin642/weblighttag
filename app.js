@@ -914,6 +914,8 @@ function autoDetectLocPoints() {
   cv.findContours(mask, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
   const blobs = [];
+  const centerX = crop.sw / 2;
+  const centerY = crop.sh / 2;
   for (let i = 0; i < contours.size(); i += 1) {
     const cnt = contours.get(i);
     const area = cv.contourArea(cnt);
@@ -922,14 +924,28 @@ function autoDetectLocPoints() {
     if (m.m00 === 0) continue;
     const peri = cv.arcLength(cnt, true);
     const circularity = peri === 0 ? 0 : (4 * Math.PI * area) / (peri * peri);
-    if (circularity < 0.2) continue;
+    if (circularity < 0.35) continue;
     const cx = m.m10 / m.m00;
     const cy = m.m01 / m.m00;
-    blobs.push({ x: cx, y: cy, area, circularity });
+    const dist = Math.hypot(cx - centerX, cy - centerY);
+    blobs.push({ x: cx, y: cy, area, circularity, dist });
   }
 
-  blobs.sort((a, b) => b.area - a.area);
-  const candidates = blobs.slice(0, 12);
+  const areaSorted = [...blobs].sort((a, b) => a.area - b.area);
+  const medianArea = areaSorted.length
+    ? areaSorted[Math.floor(areaSorted.length / 2)].area
+    : 0;
+  const minArea = medianArea * 0.4;
+  const maxArea = medianArea * 2.5;
+  const maxDist = Math.min(crop.sw, crop.sh) * 0.6;
+  const filtered = blobs.filter((b) => {
+    if (medianArea > 0 && (b.area < minArea || b.area > maxArea)) return false;
+    if (b.dist > maxDist) return false;
+    return true;
+  });
+
+  filtered.sort((a, b) => b.area - a.area);
+  const candidates = filtered.slice(0, 12);
   if (candidates.length < 5) {
     ui.locStatus.textContent = "偵測到的藍燈不足 5 顆";
   } else {
@@ -956,8 +972,14 @@ function autoDetectLocPoints() {
       if (ordered.length !== 5) continue;
       const score = scorePnP(ordered);
       if (!score.ok || score.z === null || score.z <= 0) continue;
-      if (!best || score.error < best.error) {
-        best = { error: score.error, ordered };
+      const centerPenalty = ordered.reduce((acc, p) => {
+        const dx = p.x - 0.5;
+        const dy = p.y - 0.5;
+        return acc + Math.hypot(dx, dy);
+      }, 0) / ordered.length;
+      const finalScore = score.error + centerPenalty * 3.0;
+      if (!best || finalScore < best.error) {
+        best = { error: finalScore, ordered };
       }
     }
 
