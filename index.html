@@ -20,6 +20,7 @@
         <section class="panel video-panel">
           <div class="video-wrap">
             <video id="video" playsinline muted></video>
+            <canvas id="processed"></canvas>
             <canvas id="overlay"></canvas>
           </div>
           <div class="video-actions">
@@ -28,6 +29,10 @@
             <button id="btnAuto" disabled>Auto Detect LEDs</button>
             <button id="btnClear" disabled>Clear Points</button>
             <button id="btnDecode" disabled>Start Decode</button>
+            <label class="toggle">
+              <input id="chkBgSub" type="checkbox" disabled />
+              背景弱化視圖
+            </label>
           </div>
           <div class="hint">
             Click three LED positions on the video, or use Auto Detect. Points are stored per session.

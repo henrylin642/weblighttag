@@ -86,6 +86,17 @@ video, canvas {
   object-fit: cover;
 }
 
+#processed {
+  z-index: 1;
+  mix-blend-mode: screen;
+  opacity: 0.85;
+  pointer-events: none;
+}
+
+#overlay {
+  z-index: 2;
+}
+
 .video-actions {
   display: flex;
   flex-wrap: wrap;
@@ -106,6 +117,22 @@ button {
 button:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #0b1016;
+}
+
+.toggle input {
+  margin: 0;
 }
 
 .hint {

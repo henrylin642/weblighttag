@@ -2,11 +2,13 @@ const ui = {
   status: document.getElementById("status"),
   video: document.getElementById("video"),
   overlay: document.getElementById("overlay"),
+  processed: document.getElementById("processed"),
   btnStart: document.getElementById("btnStart"),
   btnStop: document.getElementById("btnStop"),
   btnAuto: document.getElementById("btnAuto"),
   btnClear: document.getElementById("btnClear"),
   btnDecode: document.getElementById("btnDecode"),
+  chkBgSub: document.getElementById("chkBgSub"),
   infoFps: document.getElementById("infoFps"),
   infoExposure: document.getElementById("infoExposure"),
   infoIso: document.getElementById("infoIso"),
@@ -50,6 +52,8 @@ const state = {
   fpsSamples: [],
   brightnessBuffers: [[], [], []],
   smoothValues: [null, null, null],
+  showBgSub: false,
+  bgModel: null,
   symbolStream: [],
   capturing: false,
   captureSymbols: [],
@@ -59,6 +63,9 @@ const state = {
 const offscreen = document.createElement("canvas");
 const offCtx = offscreen.getContext("2d", { willReadFrequently: true });
 const overlayCtx = ui.overlay.getContext("2d");
+const processedCtx = ui.processed.getContext("2d");
+const procCanvas = document.createElement("canvas");
+const procCtx = procCanvas.getContext("2d", { willReadFrequently: true });
 
 function logLine(text) {
   const stamp = new Date().toLocaleTimeString();
@@ -139,6 +146,7 @@ async function startCamera() {
     ui.btnAuto.disabled = false;
     ui.btnClear.disabled = false;
     ui.btnDecode.disabled = false;
+    ui.chkBgSub.disabled = false;
 
     startFrameLoop();
   } catch (err) {
@@ -165,14 +173,24 @@ function stopCamera() {
   ui.btnAuto.disabled = true;
   ui.btnClear.disabled = true;
   ui.btnDecode.disabled = true;
+  ui.chkBgSub.disabled = true;
+  ui.chkBgSub.checked = false;
+  state.showBgSub = false;
+  state.bgModel = null;
+  processedCtx.clearRect(0, 0, ui.processed.width, ui.processed.height);
 }
 
 function resizeCanvases() {
   const rect = ui.video.getBoundingClientRect();
   ui.overlay.width = rect.width;
   ui.overlay.height = rect.height;
+  ui.processed.width = rect.width;
+  ui.processed.height = rect.height;
   offscreen.width = ui.video.videoWidth || 1280;
   offscreen.height = ui.video.videoHeight || 720;
+  procCanvas.width = 160;
+  procCanvas.height = 90;
+  state.bgModel = null;
 }
 
 function updateDeviceInfo() {
@@ -215,6 +233,45 @@ function drawOverlay() {
     overlayCtx.fillStyle = "#ffffff";
     overlayCtx.fillText(`LED ${idx + 1}`, x + 10, y - 10);
   });
+}
+
+function updateBackgroundView() {
+  if (!state.showBgSub) {
+    processedCtx.clearRect(0, 0, ui.processed.width, ui.processed.height);
+    return;
+  }
+
+  procCtx.drawImage(ui.video, 0, 0, procCanvas.width, procCanvas.height);
+  const image = procCtx.getImageData(0, 0, procCanvas.width, procCanvas.height);
+  const { data } = image;
+  const length = procCanvas.width * procCanvas.height;
+
+  if (!state.bgModel || state.bgModel.length !== length) {
+    state.bgModel = new Float32Array(length);
+    for (let i = 0; i < length; i += 1) {
+      const idx = i * 4;
+      state.bgModel[i] = (data[idx] + data[idx + 1] + data[idx + 2]) / 3;
+    }
+  }
+
+  const alpha = 0.02;
+  const gain = 4.0;
+  for (let i = 0; i < length; i += 1) {
+    const idx = i * 4;
+    const gray = (data[idx] + data[idx + 1] + data[idx + 2]) / 3;
+    const bg = state.bgModel[i];
+    const nextBg = bg * (1 - alpha) + gray * alpha;
+    state.bgModel[i] = nextBg;
+    const diff = Math.max(0, gray - nextBg) * gain;
+    data[idx] = diff;
+    data[idx + 1] = diff;
+    data[idx + 2] = diff;
+    data[idx + 3] = 255;
+  }
+
+  procCtx.putImageData(image, 0, 0);
+  processedCtx.clearRect(0, 0, ui.processed.width, ui.processed.height);
+  processedCtx.drawImage(procCanvas, 0, 0, ui.processed.width, ui.processed.height);
 }
 
 function addRoiFromClick(event) {
@@ -448,6 +505,7 @@ function updateFps(ts) {
 function processFrame(ts) {
   updateFps(ts);
   if (!state.decoding || state.rois.length !== 3) {
+    updateBackgroundView();
     requestNextFrame();
     return;
   }
@@ -464,6 +522,7 @@ function processFrame(ts) {
   updateLiveMetrics(brightness, smoothed, symbol);
 
   attemptDecode(symbol);
+  updateBackgroundView();
   requestNextFrame();
 }
 
@@ -499,6 +558,10 @@ ui.btnStop.addEventListener("click", stopCamera);
 ui.btnAuto.addEventListener("click", autoDetectRois);
 ui.btnClear.addEventListener("click", clearRois);
 ui.btnDecode.addEventListener("click", toggleDecode);
+ui.chkBgSub.addEventListener("change", (event) => {
+  state.showBgSub = event.target.checked;
+  state.bgModel = null;
+});
 
 window.addEventListener("beforeunload", () => {
   if (state.stream) state.stream.getTracks().forEach((t) => t.stop());
