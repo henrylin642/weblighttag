@@ -101,6 +101,8 @@ const state = {
   autoLocating: false,
   trackPoints: null,
   lastTrackTs: 0,
+  lastAutoDetectTs: 0,
+  autoDetectBusy: false,
   symbolStream: [],
   capturing: false,
   captureSymbols: [],
@@ -590,6 +592,7 @@ function toggleAutoLocating() {
   ui.btnLocAuto.textContent = state.autoLocating ? "停止自動偵測" : "開始自動偵測";
   if (!state.autoLocating) {
     state.trackPoints = null;
+    state.autoDetectBusy = false;
   }
 }
 
@@ -862,12 +865,14 @@ function scorePnP(points) {
 }
 
 function autoDetectLocPoints() {
+  if (state.autoDetectBusy) return;
   if (!ensureCvReady()) {
     ui.locStatus.textContent = "OpenCV 尚未就緒";
     return;
   }
   if (!state.stream) return;
 
+  state.autoDetectBusy = true;
   const enhance = getEnhanceConfig();
   offCtx.drawImage(ui.video, 0, 0, offscreen.width, offscreen.height);
   const cropRaw = getCoverRect(
@@ -971,6 +976,7 @@ function autoDetectLocPoints() {
   kernel.delete();
   contours.delete();
   hierarchy.delete();
+  state.autoDetectBusy = false;
 }
 
 function estimateLedQuality() {
@@ -1253,7 +1259,11 @@ function processFrame(ts) {
   updateFps(ts);
   if (state.autoLocating) {
     const tracked = updateTracking();
-    if (!tracked) autoDetectLocPoints();
+    const intervalMs = 300;
+    if (!tracked && ts - state.lastAutoDetectTs >= intervalMs) {
+      state.lastAutoDetectTs = ts;
+      autoDetectLocPoints();
+    }
   }
 
   if (state.decoding && state.rois.length === 3) {
