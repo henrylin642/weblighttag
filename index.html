@@ -5,6 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Antigravity Optical ID Reader</title>
     <link rel="stylesheet" href="styles.css" />
+    <script>
+      window.Module = {
+        onRuntimeInitialized() {
+          window.__cvReady = true;
+        }
+      };
+    </script>
   </head>
   <body>
     <div class="app">
@@ -36,6 +43,14 @@
             <label class="toggle">
               <input id="chkEnhance" type="checkbox" disabled checked />
               影像強化視圖
+            </label>
+            <label class="toggle">
+              <input id="modeDataLed" name="clickMode" type="radio" checked />
+              點選數據燈
+            </label>
+            <label class="toggle">
+              <input id="modeLocLed" name="clickMode" type="radio" />
+              點選定位燈
             </label>
           </div>
           <div class="hint">
@@ -86,6 +101,45 @@
               <input id="cfgBgDim" type="range" min="0" max="1" step="0.05" value="0.4" />
               <span id="valBgDim">0.40</span>
             </label>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2>定位驗證 (5 藍燈)</h2>
+          <div class="hint">
+            切換「點選定位燈」，在畫面中依序點 5 顆藍燈。完成後點「計算定位」。
+          </div>
+          <div class="video-actions">
+            <button id="btnLocClear" disabled>清除定位點</button>
+            <button id="btnLocSolve" disabled>計算定位</button>
+          </div>
+          <div class="config-grid">
+            <label>fx
+              <input id="cfgFx" type="number" step="1" />
+            </label>
+            <label>fy
+              <input id="cfgFy" type="number" step="1" />
+            </label>
+            <label>cx
+              <input id="cfgCx" type="number" step="1" />
+            </label>
+            <label>cy
+              <input id="cfgCy" type="number" step="1" />
+            </label>
+          </div>
+          <div class="output-row">
+            <div>
+              <div class="label">PnP 狀態</div>
+              <div id="locStatus">-</div>
+            </div>
+            <div>
+              <div class="label">位置 (mm)</div>
+              <div id="locPos">-</div>
+            </div>
+            <div>
+              <div class="label">姿態 (deg)</div>
+              <div id="locRot">-</div>
+            </div>
           </div>
         </section>
 
@@ -217,6 +271,7 @@
       </main>
     </div>
 
+    <script src="https://docs.opencv.org/4.x/opencv.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

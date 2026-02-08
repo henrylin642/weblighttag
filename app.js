@@ -10,6 +10,17 @@ const ui = {
   btnDecode: document.getElementById("btnDecode"),
   chkBgSub: document.getElementById("chkBgSub"),
   chkEnhance: document.getElementById("chkEnhance"),
+  modeDataLed: document.getElementById("modeDataLed"),
+  modeLocLed: document.getElementById("modeLocLed"),
+  btnLocClear: document.getElementById("btnLocClear"),
+  btnLocSolve: document.getElementById("btnLocSolve"),
+  cfgFx: document.getElementById("cfgFx"),
+  cfgFy: document.getElementById("cfgFy"),
+  cfgCx: document.getElementById("cfgCx"),
+  cfgCy: document.getElementById("cfgCy"),
+  locStatus: document.getElementById("locStatus"),
+  locPos: document.getElementById("locPos"),
+  locRot: document.getElementById("locRot"),
   infoFps: document.getElementById("infoFps"),
   infoExposure: document.getElementById("infoExposure"),
   infoIso: document.getElementById("infoIso"),
@@ -69,6 +80,8 @@ const state = {
   smoothValues: [null, null, null],
   showBgSub: false,
   bgModel: null,
+  locPoints: [],
+  cvReady: false,
   symbolStream: [],
   capturing: false,
   captureSymbols: [],
@@ -186,6 +199,10 @@ async function startCamera() {
     ui.btnDecode.disabled = false;
     ui.chkBgSub.disabled = false;
     ui.chkEnhance.disabled = false;
+    ui.btnLocClear.disabled = false;
+    ui.btnLocSolve.disabled = false;
+
+    estimateIntrinsics();
 
     startFrameLoop();
   } catch (err) {
@@ -216,11 +233,14 @@ function stopCamera() {
   ui.chkBgSub.checked = false;
   ui.chkEnhance.disabled = true;
   ui.chkEnhance.checked = true;
+  ui.btnLocClear.disabled = true;
+  ui.btnLocSolve.disabled = true;
   state.showBgSub = false;
   state.bgModel = null;
   processedCtx.clearRect(0, 0, ui.processed.width, ui.processed.height);
   ui.processed.style.opacity = "0";
   ui.video.style.opacity = "1";
+  clearLocPoints();
 }
 
 function resizeCanvases() {
@@ -276,6 +296,18 @@ function drawOverlay() {
     overlayCtx.fillRect(x - roi.size / 2, y - roi.size / 2, roi.size, roi.size);
     overlayCtx.fillStyle = "#ffffff";
     overlayCtx.fillText(`LED ${idx + 1}`, x + 10, y - 10);
+  });
+
+  state.locPoints.forEach((pt, idx) => {
+    const x = pt.x * ui.overlay.width;
+    const y = pt.y * ui.overlay.height;
+    overlayCtx.strokeStyle = "#6b7bff";
+    overlayCtx.lineWidth = 2;
+    overlayCtx.beginPath();
+    overlayCtx.arc(x, y, 6, 0, Math.PI * 2);
+    overlayCtx.stroke();
+    overlayCtx.fillStyle = "#6b7bff";
+    overlayCtx.fillText(`P${idx + 1}`, x + 8, y - 8);
   });
 }
 
@@ -478,14 +510,27 @@ function addRoiFromClick(event) {
   const rect = ui.overlay.getBoundingClientRect();
   const x = (event.clientX - rect.left) / rect.width;
   const y = (event.clientY - rect.top) / rect.height;
-  if (state.rois.length >= 3) return;
-  state.rois.push({ x, y, size: state.roiSize });
+  if (ui.modeLocLed.checked) {
+    if (state.locPoints.length >= 5) return;
+    state.locPoints.push({ x, y });
+  } else {
+    if (state.rois.length >= 3) return;
+    state.rois.push({ x, y, size: state.roiSize });
+  }
   drawOverlay();
 }
 
 function clearRois() {
   state.rois = [];
   state.brightnessBuffers = [[], [], []];
+  drawOverlay();
+}
+
+function clearLocPoints() {
+  state.locPoints = [];
+  ui.locStatus.textContent = "-";
+  ui.locPos.textContent = "-";
+  ui.locRot.textContent = "-";
   drawOverlay();
 }
 
@@ -573,6 +618,94 @@ function computeBrightness(roi) {
     sum += (data[i] + data[i + 1] + data[i + 2]) / 3;
   }
   return sum / (data.length / 4);
+}
+
+function estimateIntrinsics() {
+  const w = offscreen.width || 1280;
+  const h = offscreen.height || 720;
+  const f = 0.9 * Math.max(w, h);
+  ui.cfgFx.value = Math.round(f);
+  ui.cfgFy.value = Math.round(f);
+  ui.cfgCx.value = Math.round(w / 2);
+  ui.cfgCy.value = Math.round(h / 2);
+}
+
+function getCameraMatrix() {
+  const fx = Number(ui.cfgFx.value);
+  const fy = Number(ui.cfgFy.value);
+  const cx = Number(ui.cfgCx.value);
+  const cy = Number(ui.cfgCy.value);
+  return { fx, fy, cx, cy };
+}
+
+function ensureCvReady() {
+  if (state.cvReady) return true;
+  if (window.__cvReady && window.cv && window.cv.Mat) {
+    state.cvReady = true;
+    return true;
+  }
+  return false;
+}
+
+function solvePnP() {
+  if (!ensureCvReady()) {
+    ui.locStatus.textContent = "OpenCV 尚未就緒";
+    return;
+  }
+  if (state.locPoints.length !== 5) {
+    ui.locStatus.textContent = "需要 5 個定位點";
+    return;
+  }
+
+  const objectPts = [
+    [33.65, 21.8, 0],
+    [33.65, -21.8, 0],
+    [-33.65, -21.8, 0],
+    [-33.65, 21.8, 0],
+    [0, 63.09, 20.1],
+  ];
+
+  const imgPts = state.locPoints.map((pt) => {
+    const { px, py } = mapOverlayToSource(pt);
+    return [px, py];
+  });
+
+  const objMat = cv.matFromArray(5, 3, cv.CV_32F, objectPts.flat());
+  const imgMat = cv.matFromArray(5, 2, cv.CV_32F, imgPts.flat());
+
+  const { fx, fy, cx, cy } = getCameraMatrix();
+  const camMat = cv.matFromArray(3, 3, cv.CV_32F, [
+    fx, 0, cx,
+    0, fy, cy,
+    0, 0, 1
+  ]);
+  const distCoeffs = cv.Mat.zeros(4, 1, cv.CV_32F);
+  const rvec = new cv.Mat();
+  const tvec = new cv.Mat();
+
+  const ok = cv.solvePnP(objMat, imgMat, camMat, distCoeffs, rvec, tvec, false, cv.SOLVEPNP_ITERATIVE);
+
+  if (!ok) {
+    ui.locStatus.textContent = "PnP 失敗";
+  } else {
+    const rmat = new cv.Mat();
+    cv.Rodrigues(rvec, rmat);
+    const r = rmat.data32F;
+    const yaw = Math.atan2(r[3], r[0]);
+    const pitch = Math.atan2(-r[6], Math.sqrt(r[7] * r[7] + r[8] * r[8]));
+    const roll = Math.atan2(r[7], r[8]);
+    const deg = (v) => (v * 180) / Math.PI;
+    ui.locStatus.textContent = "PnP 成功";
+    ui.locPos.textContent = `${tvec.data32F[0].toFixed(1)}, ${tvec.data32F[1].toFixed(1)}, ${tvec.data32F[2].toFixed(1)}`;
+    ui.locRot.textContent = `${deg(roll).toFixed(1)}, ${deg(pitch).toFixed(1)}, ${deg(yaw).toFixed(1)}`;
+  }
+
+  objMat.delete();
+  imgMat.delete();
+  camMat.delete();
+  distCoeffs.delete();
+  rvec.delete();
+  tvec.delete();
 }
 
 function updateBrightnessBuffers(values) {
@@ -773,6 +906,8 @@ ui.btnStop.addEventListener("click", stopCamera);
 ui.btnAuto.addEventListener("click", autoDetectRois);
 ui.btnClear.addEventListener("click", clearRois);
 ui.btnDecode.addEventListener("click", toggleDecode);
+ui.btnLocClear.addEventListener("click", clearLocPoints);
+ui.btnLocSolve.addEventListener("click", solvePnP);
 ui.chkBgSub.addEventListener("change", (event) => {
   state.showBgSub = event.target.checked;
   state.bgModel = null;
