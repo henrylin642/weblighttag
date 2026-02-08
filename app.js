@@ -746,6 +746,69 @@ function sortLocPoints(points) {
   return [quad.rt, quad.rb, quad.lb, quad.lt, top].filter(Boolean);
 }
 
+function scorePnP(points) {
+  if (!ensureCvReady()) return { ok: false };
+  if (points.length !== 5) return { ok: false };
+
+  const objectPts = [
+    [33.65, 21.8, 0],
+    [33.65, -21.8, 0],
+    [-33.65, -21.8, 0],
+    [-33.65, 21.8, 0],
+    [0, 63.09, 20.1],
+  ];
+
+  const imgPts = points.map((pt) => {
+    const { px, py } = mapOverlayToSource(pt);
+    return [px, py];
+  });
+
+  const objMat = cv.matFromArray(5, 3, cv.CV_32F, objectPts.flat());
+  const imgMat = cv.matFromArray(5, 2, cv.CV_32F, imgPts.flat());
+
+  const { fx, fy, cx, cy } = getCameraMatrix();
+  if (!fx || !fy) {
+    objMat.delete();
+    imgMat.delete();
+    return { ok: false };
+  }
+  const camMat = cv.matFromArray(3, 3, cv.CV_32F, [
+    fx, 0, cx,
+    0, fy, cy,
+    0, 0, 1
+  ]);
+  const distCoeffs = cv.Mat.zeros(4, 1, cv.CV_32F);
+  const rvec = new cv.Mat();
+  const tvec = new cv.Mat();
+
+  const ok = cv.solvePnP(objMat, imgMat, camMat, distCoeffs, rvec, tvec, false, cv.SOLVEPNP_ITERATIVE);
+  let error = Infinity;
+  let z = null;
+  if (ok) {
+    const projected = new cv.Mat();
+    cv.projectPoints(objMat, rvec, tvec, camMat, distCoeffs, projected);
+    const p = projected.data32F;
+    let sum = 0;
+    for (let i = 0; i < 5; i += 1) {
+      const dx = p[i * 2] - imgPts[i][0];
+      const dy = p[i * 2 + 1] - imgPts[i][1];
+      sum += Math.hypot(dx, dy);
+    }
+    error = sum / 5;
+    z = tvec.data32F[2];
+    projected.delete();
+  }
+
+  objMat.delete();
+  imgMat.delete();
+  camMat.delete();
+  distCoeffs.delete();
+  rvec.delete();
+  tvec.delete();
+
+  return { ok, error, z };
+}
+
 function autoDetectLocPoints() {
   if (!ensureCvReady()) {
     ui.locStatus.textContent = "OpenCV 尚未就緒";
@@ -812,14 +875,12 @@ function autoDetectLocPoints() {
   } else {
     let best = null;
     const combos = [];
-    for (let t = 0; t < candidates.length; t += 1) {
-      const top = candidates[t];
-      const rest = candidates.filter((_, i) => i !== t);
-      for (let a = 0; a < rest.length; a += 1) {
-        for (let b = a + 1; b < rest.length; b += 1) {
-          for (let c = b + 1; c < rest.length; c += 1) {
-            for (let d = c + 1; d < rest.length; d += 1) {
-              combos.push([top, rest[a], rest[b], rest[c], rest[d]]);
+    for (let a = 0; a < candidates.length; a += 1) {
+      for (let b = a + 1; b < candidates.length; b += 1) {
+        for (let c = b + 1; c < candidates.length; c += 1) {
+          for (let d = c + 1; d < candidates.length; d += 1) {
+            for (let e = d + 1; e < candidates.length; e += 1) {
+              combos.push([candidates[a], candidates[b], candidates[c], candidates[d], candidates[e]]);
             }
           }
         }
@@ -827,55 +888,25 @@ function autoDetectLocPoints() {
     }
 
     for (const set of combos) {
-      const top = set[0];
-      const base = set.slice(1);
-      const cx = base.reduce((acc, p) => acc + p.x, 0) / 4;
-      const cy = base.reduce((acc, p) => acc + p.y, 0) / 4;
-      if (top.y > cy) continue;
-      const xs = base.map((p) => p.x);
-      const ys = base.map((p) => p.y);
-      const minx = Math.min(...xs);
-      const maxx = Math.max(...xs);
-      const miny = Math.min(...ys);
-      const maxy = Math.max(...ys);
-      const corners = [
-        { x: minx, y: miny },
-        { x: maxx, y: miny },
-        { x: maxx, y: maxy },
-        { x: minx, y: maxy },
-      ];
-      let cornerDist = 0;
-      for (const p of base) {
-        let bestDist = Infinity;
-        for (const c of corners) {
-          const dx = p.x - c.x;
-          const dy = p.y - c.y;
-          bestDist = Math.min(bestDist, dx * dx + dy * dy);
-        }
-        cornerDist += bestDist;
-      }
-      const spread = (maxx - minx) * (maxy - miny);
-      const score = cornerDist / Math.max(1, spread);
-      if (!best || score < best.score) {
-        best = { score, set };
+      const normalized = set.map((p) => ({
+        x: p.x / crop.sw,
+        y: p.y / crop.sh,
+      }));
+      const ordered = sortLocPoints(normalized);
+      if (ordered.length !== 5) continue;
+      const score = scorePnP(ordered);
+      if (!score.ok || score.z === null || score.z <= 0) continue;
+      if (!best || score.error < best.error) {
+        best = { error: score.error, ordered };
       }
     }
 
     if (!best) {
       ui.locStatus.textContent = "定位燈幾何不符合";
     } else {
-      const normalized = best.set.map((p) => ({
-        x: p.x / crop.sw,
-        y: p.y / crop.sh,
-      }));
-      const ordered = sortLocPoints(normalized);
-      if (ordered.length === 5) {
-        state.locPoints = ordered;
-        ui.locStatus.textContent = "定位燈自動偵測完成";
-        drawOverlay();
-      } else {
-        ui.locStatus.textContent = "定位燈排序失敗";
-      }
+      state.locPoints = best.ordered;
+      ui.locStatus.textContent = `定位燈自動偵測完成 (err≈${best.error.toFixed(2)}px)`;
+      drawOverlay();
     }
   }
 
