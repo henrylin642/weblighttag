@@ -98,6 +98,9 @@ const state = {
   bgModel: null,
   locPoints: [],
   cvReady: false,
+  autoLocating: false,
+  trackPoints: null,
+  lastTrackTs: 0,
   symbolStream: [],
   capturing: false,
   captureSymbols: [],
@@ -277,6 +280,8 @@ function stopCamera() {
   ui.btnLocAuto.disabled = true;
   ui.btnLocSolve.disabled = true;
   ui.btnLedQuality.disabled = true;
+  state.autoLocating = false;
+  ui.btnLocAuto.textContent = "開始自動偵測";
   state.showBgSub = false;
   state.bgModel = null;
   processedCtx.clearRect(0, 0, ui.processed.width, ui.processed.height);
@@ -578,6 +583,53 @@ function updateProcessedView() {
   procCtx.putImageData(image, 0, 0);
   processedCtx.clearRect(0, 0, ui.processed.width, ui.processed.height);
   processedCtx.drawImage(procCanvas, 0, 0, ui.processed.width, ui.processed.height);
+}
+
+function toggleAutoLocating() {
+  state.autoLocating = !state.autoLocating;
+  ui.btnLocAuto.textContent = state.autoLocating ? "停止自動偵測" : "開始自動偵測";
+  if (!state.autoLocating) {
+    state.trackPoints = null;
+  }
+}
+
+function startTracking(points) {
+  state.trackPoints = points.map((p) => ({ x: p.x, y: p.y }));
+  state.lastTrackTs = performance.now();
+}
+
+function updateTracking() {
+  if (!state.trackPoints || !state.trackPoints.length) return false;
+  offCtx.drawImage(ui.video, 0, 0, offscreen.width, offscreen.height);
+  const next = [];
+  let ok = true;
+  for (const pt of state.trackPoints) {
+    const { px, py, scale } = mapOverlayToSource(pt);
+    const x = Math.round(px);
+    const y = Math.round(py);
+    const win = Math.max(10, Math.round(26 * scale));
+    const { values, w, h, startX, startY } = computeBlueDiffAt(x, y, win);
+    let max = 0;
+    let maxIdx = 0;
+    for (let i = 0; i < values.length; i += 1) {
+      if (values[i] > max) {
+        max = values[i];
+        maxIdx = i;
+      }
+    }
+    if (max < 10) {
+      ok = false;
+      break;
+    }
+    const nx = startX + (maxIdx % w);
+    const ny = startY + Math.floor(maxIdx / w);
+    next.push({ x: nx / offscreen.width, y: ny / offscreen.height });
+  }
+  if (!ok || next.length !== 5) return false;
+  state.trackPoints = next;
+  state.locPoints = next;
+  drawOverlay();
+  return true;
 }
 
 function addRoiFromClick(event) {
@@ -905,6 +957,7 @@ function autoDetectLocPoints() {
       ui.locStatus.textContent = "定位燈幾何不符合";
     } else {
       state.locPoints = best.ordered;
+      startTracking(best.ordered);
       ui.locStatus.textContent = `定位燈自動偵測完成 (err≈${best.error.toFixed(2)}px)`;
       drawOverlay();
     }
@@ -1198,24 +1251,25 @@ function updateFps(ts) {
 
 function processFrame(ts) {
   updateFps(ts);
-  if (!state.decoding || state.rois.length !== 3) {
-    updateProcessedView();
-    requestNextFrame();
-    return;
+  if (state.autoLocating) {
+    const tracked = updateTracking();
+    if (!tracked) autoDetectLocPoints();
   }
 
-  offCtx.drawImage(ui.video, 0, 0, offscreen.width, offscreen.height);
-  const brightness = state.rois.map((roi) => computeBrightness(roi));
-  updateBrightnessBuffers(brightness);
-  const normalized = computeNormalized(brightness);
-  const smoothed = smoothNormalized(normalized);
-  const thresholds = [0.5, 0.5, 0.5];
+  if (state.decoding && state.rois.length === 3) {
+    offCtx.drawImage(ui.video, 0, 0, offscreen.width, offscreen.height);
+    const brightness = state.rois.map((roi) => computeBrightness(roi));
+    updateBrightnessBuffers(brightness);
+    const normalized = computeNormalized(brightness);
+    const smoothed = smoothNormalized(normalized);
+    const thresholds = [0.5, 0.5, 0.5];
 
-  const bits = smoothed.map((value, i) => (value > thresholds[i] ? 1 : 0));
-  const symbol = bits.reduce((acc, bit, idx) => acc | (bit << idx), 0);
-  updateLiveMetrics(brightness, smoothed, symbol);
+    const bits = smoothed.map((value, i) => (value > thresholds[i] ? 1 : 0));
+    const symbol = bits.reduce((acc, bit, idx) => acc | (bit << idx), 0);
+    updateLiveMetrics(brightness, smoothed, symbol);
 
-  attemptDecode(symbol);
+    attemptDecode(symbol);
+  }
   updateProcessedView();
   requestNextFrame();
 }
@@ -1253,7 +1307,7 @@ ui.btnAuto.addEventListener("click", autoDetectRois);
 ui.btnClear.addEventListener("click", clearRois);
 ui.btnDecode.addEventListener("click", toggleDecode);
 ui.btnLocClear.addEventListener("click", clearLocPoints);
-ui.btnLocAuto.addEventListener("click", autoDetectLocPoints);
+ui.btnLocAuto.addEventListener("click", toggleAutoLocating);
 ui.btnLocSolve.addEventListener("click", solvePnP);
 ui.btnLedQuality.addEventListener("click", estimateLedQuality);
 ui.chkBgSub.addEventListener("change", (event) => {
