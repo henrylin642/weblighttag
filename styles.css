@@ -66,10 +66,13 @@ body {
 
 .video-panel {
   grid-column: span 2;
+  align-self: start;
 }
 
 .video-wrap {
-  position: relative;
+  position: sticky;
+  top: 12px;
+  z-index: 5;
   width: 100%;
   aspect-ratio: 16 / 9;
   background: #05070a;
@@ -249,4 +252,5 @@ label span {
 
 @media (max-width: 900px) {
   .video-panel, .output { grid-column: span 1; }
+  .video-wrap { top: 8px; }
 }
