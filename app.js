@@ -16,6 +16,12 @@ const ui = {
   liveBrightness: document.getElementById("liveBrightness"),
   liveThresholds: document.getElementById("liveThresholds"),
   liveSymbol: document.getElementById("liveSymbol"),
+  bar1: document.getElementById("bar1"),
+  bar2: document.getElementById("bar2"),
+  bar3: document.getElementById("bar3"),
+  bar1Val: document.getElementById("bar1Val"),
+  bar2Val: document.getElementById("bar2Val"),
+  bar3Val: document.getElementById("bar3Val"),
   decodeStatus: document.getElementById("decodeStatus"),
   decodeId: document.getElementById("decodeId"),
   decodeCrc: document.getElementById("decodeCrc"),
@@ -416,6 +422,15 @@ function updateLiveMetrics(brightness, thresholds, symbol) {
   ui.liveBrightness.textContent = brightness.map((v) => v.toFixed(1)).join(" / ");
   ui.liveThresholds.textContent = thresholds.map((v) => v.toFixed(1)).join(" / ");
   ui.liveSymbol.textContent = symbol !== null ? String(symbol) : "-";
+
+  const vals = thresholds.map((v) => Math.max(0, Math.min(1, v)));
+  const pct = vals.map((v) => `${Math.round(v * 100)}%`);
+  ui.bar1.style.width = pct[0];
+  ui.bar2.style.width = pct[1];
+  ui.bar3.style.width = pct[2];
+  ui.bar1Val.textContent = vals[0].toFixed(2);
+  ui.bar2Val.textContent = vals[1].toFixed(2);
+  ui.bar3Val.textContent = vals[2].toFixed(2);
 }
 
 function updateFps(ts) {
