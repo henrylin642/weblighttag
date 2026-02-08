@@ -22,6 +22,7 @@ const ui = {
   locStatus: document.getElementById("locStatus"),
   locPos: document.getElementById("locPos"),
   locRot: document.getElementById("locRot"),
+  locDist: document.getElementById("locDist"),
   camRes: document.getElementById("camRes"),
   ledQuality: document.getElementById("ledQuality"),
   btnLedQuality: document.getElementById("btnLedQuality"),
@@ -664,6 +665,7 @@ function clearLocPoints() {
   ui.locStatus.textContent = "-";
   ui.locPos.textContent = "-";
   ui.locRot.textContent = "-";
+  ui.locDist.textContent = "-";
   drawOverlay();
 }
 
@@ -1190,9 +1192,14 @@ function solvePnP() {
     const pitch = Math.atan2(-r[6], Math.sqrt(r[7] * r[7] + r[8] * r[8]));
     const roll = Math.atan2(r[7], r[8]);
     const deg = (v) => (v * 180) / Math.PI;
+    const tx = tvec.data32F[0];
+    const ty = tvec.data32F[1];
+    const tz = tvec.data32F[2];
+    const dist = Math.sqrt(tx * tx + ty * ty + tz * tz) / 1000;
     ui.locStatus.textContent = "PnP 成功";
-    ui.locPos.textContent = `${tvec.data32F[0].toFixed(1)}, ${tvec.data32F[1].toFixed(1)}, ${tvec.data32F[2].toFixed(1)}`;
+    ui.locPos.textContent = `${tx.toFixed(1)}, ${ty.toFixed(1)}, ${tz.toFixed(1)}`;
     ui.locRot.textContent = `${deg(roll).toFixed(1)}, ${deg(pitch).toFixed(1)}, ${deg(yaw).toFixed(1)}`;
+    ui.locDist.textContent = dist.toFixed(2);
   }
 
   objMat.delete();
