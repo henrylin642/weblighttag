@@ -1,3 +1,494 @@
+// ===================================================================
+// 6DoF定位系統 - LED檢測與姿態估計
+// ===================================================================
+
+// LED 3D世界座標配置
+const LED_CONFIG = {
+  points3D: [
+    { id: 1, x: 33.65, y: 21.8, z: 0 },      // 右上
+    { id: 2, x: 33.65, y: -21.8, z: 0 },     // 右下
+    { id: 3, x: -33.65, y: -21.8, z: 0 },    // 左下
+    { id: 4, x: -33.65, y: 21.8, z: 0 },     // 左上
+    { id: 5, x: 0, y: 63.09, z: 20.1 }       // 中心突出
+  ],
+  expectedAspectRatio: (33.65 * 2) / (21.8 * 2),
+  aspectRatioTolerance: 0.25,
+  minArea: 4,
+  maxArea: 800,
+  minCircularity: 0.35,
+  blueDiffThreshold: 30
+};
+
+// 藍光LED檢測器
+class BlueLEDDetector {
+  constructor(hsvParams) {
+    this.hsvParams = hsvParams || {
+      hMin: 192,
+      hMax: 260,
+      sMin: 0.74,
+      vMin: 0.70
+    };
+  }
+
+  detect(srcMat, crop) {
+    const blueDiffMask = this.createBlueDifferentialMask(srcMat);
+    const hsvMask = this.createHSVMask(srcMat);
+
+    const combinedMask = new cv.Mat();
+    cv.bitwise_and(blueDiffMask, hsvMask, combinedMask);
+    this.morphologicalFilter(combinedMask);
+
+    const ledPoints = this.extractLEDPoints(combinedMask, srcMat, crop);
+
+    blueDiffMask.delete();
+    hsvMask.delete();
+    combinedMask.delete();
+
+    return ledPoints;
+  }
+
+  createBlueDifferentialMask(srcMat) {
+    const channels = new cv.MatVector();
+    cv.split(srcMat, channels);
+
+    const B = channels.get(2);
+    const G = channels.get(1);
+    const R = channels.get(0);
+
+    const RG_sum = new cv.Mat();
+    cv.add(R, G, RG_sum);
+    const RG_avg = new cv.Mat();
+    RG_sum.convertTo(RG_avg, cv.CV_8U, 0.5);
+
+    const blueDiff = new cv.Mat();
+    cv.subtract(B, RG_avg, blueDiff);
+
+    const mask = new cv.Mat();
+    cv.threshold(blueDiff, mask, LED_CONFIG.blueDiffThreshold, 255, cv.THRESH_BINARY);
+
+    R.delete(); G.delete(); B.delete();
+    RG_sum.delete(); RG_avg.delete(); blueDiff.delete();
+    channels.delete();
+
+    return mask;
+  }
+
+  createHSVMask(srcMat) {
+    const hsvMat = new cv.Mat();
+    cv.cvtColor(srcMat, hsvMat, cv.COLOR_RGBA2RGB);
+    cv.cvtColor(hsvMat, hsvMat, cv.COLOR_RGB2HSV);
+
+    const lower = new cv.Mat(hsvMat.rows, hsvMat.cols, hsvMat.type(),
+      [this.hsvParams.hMin * 179 / 360, this.hsvParams.sMin * 255, this.hsvParams.vMin * 255, 0]);
+    const upper = new cv.Mat(hsvMat.rows, hsvMat.cols, hsvMat.type(),
+      [this.hsvParams.hMax * 179 / 360, 255, 255, 255]);
+
+    const mask = new cv.Mat();
+    cv.inRange(hsvMat, lower, upper, mask);
+
+    hsvMat.delete();
+    lower.delete();
+    upper.delete();
+
+    return mask;
+  }
+
+  morphologicalFilter(mask) {
+    const kernel1 = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(3, 3));
+    cv.morphologyEx(mask, mask, cv.MORPH_OPEN, kernel1);
+    kernel1.delete();
+
+    const kernel2 = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(5, 5));
+    cv.morphologyEx(mask, mask, cv.MORPH_CLOSE, kernel2);
+    kernel2.delete();
+  }
+
+  extractLEDPoints(mask, srcMat, crop) {
+    const contours = new cv.MatVector();
+    const hierarchy = new cv.Mat();
+    cv.findContours(mask, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+    const ledPoints = [];
+    const centerX = mask.cols / 2;
+    const centerY = mask.rows / 2;
+
+    for (let i = 0; i < contours.size(); i++) {
+      const cnt = contours.get(i);
+      const area = cv.contourArea(cnt);
+
+      if (area < LED_CONFIG.minArea || area > LED_CONFIG.maxArea) continue;
+
+      const moments = cv.moments(cnt);
+      if (moments.m00 === 0) continue;
+
+      const cx = moments.m10 / moments.m00;
+      const cy = moments.m01 / moments.m00;
+
+      const perimeter = cv.arcLength(cnt, true);
+      const circularity = perimeter === 0 ? 0 : (4 * Math.PI * area) / (perimeter * perimeter);
+
+      if (circularity >= LED_CONFIG.minCircularity) {
+        const dist = Math.hypot(cx - centerX, cy - centerY);
+        ledPoints.push({
+          x: (cx + crop.sx) / offscreen.width,
+          y: (cy + crop.sy) / offscreen.height,
+          area: area,
+          circularity: circularity,
+          dist: dist
+        });
+      }
+    }
+
+    contours.delete();
+    hierarchy.delete();
+
+    return ledPoints;
+  }
+}
+
+// 幾何匹配器
+class GeometryMatcher {
+  match(detectedPoints) {
+    if (detectedPoints.length !== 5) {
+      return { success: false, error: `檢測到${detectedPoints.length}個點，需要5個` };
+    }
+
+    let topPoint = detectedPoints.reduce((min, p) => p.y < min.y ? p : min);
+    const bottomPoints = detectedPoints.filter(p => p !== topPoint);
+
+    const centroid = {
+      x: bottomPoints.reduce((sum, p) => sum + p.x, 0) / 4,
+      y: bottomPoints.reduce((sum, p) => sum + p.y, 0) / 4
+    };
+
+    const matchedPoints = bottomPoints.map(p => {
+      const dx = p.x - centroid.x;
+      const dy = p.y - centroid.y;
+
+      let id;
+      if (dx > 0 && dy < 0) id = 1;       // 右上
+      else if (dx > 0 && dy > 0) id = 2;  // 右下
+      else if (dx < 0 && dy > 0) id = 3;  // 左下
+      else id = 4;                         // 左上
+
+      return { ...p, id };
+    });
+
+    matchedPoints.push({ ...topPoint, id: 5 });
+
+    const verification = this.verifyGeometry(matchedPoints);
+    if (!verification.valid) {
+      return { success: false, error: verification.reason };
+    }
+
+    return {
+      success: true,
+      points: matchedPoints.sort((a, b) => a.id - b.id),
+      metrics: verification.metrics
+    };
+  }
+
+  verifyGeometry(points) {
+    const p1 = points.find(p => p.id === 1);
+    const p2 = points.find(p => p.id === 2);
+    const p3 = points.find(p => p.id === 3);
+    const p4 = points.find(p => p.id === 4);
+    const p5 = points.find(p => p.id === 5);
+
+    const width = Math.abs(p1.x - p3.x);
+    const height = Math.abs(p1.y - p2.y);
+    const aspectRatio = width / height;
+
+    const ratioError = Math.abs(aspectRatio - LED_CONFIG.expectedAspectRatio) /
+                      LED_CONFIG.expectedAspectRatio;
+
+    if (ratioError > LED_CONFIG.aspectRatioTolerance) {
+      return {
+        valid: false,
+        reason: `矩形比例不符：${aspectRatio.toFixed(2)} (預期${LED_CONFIG.expectedAspectRatio.toFixed(2)})`,
+        metrics: { aspectRatio, ratioError }
+      };
+    }
+
+    const avgBottomY = (p1.y + p2.y + p3.y + p4.y) / 4;
+    if (p5.y >= avgBottomY) {
+      return {
+        valid: false,
+        reason: 'LED5位置錯誤（應在上方）',
+        metrics: { p5Y: p5.y, avgBottomY }
+      };
+    }
+
+    return {
+      valid: true,
+      metrics: { aspectRatio, ratioError, width, height }
+    };
+  }
+}
+
+// 簡易卡爾曼濾波器
+class SimpleKalman {
+  constructor() {
+    this.x = null;
+    this.y = null;
+    this.px = 1;
+    this.py = 1;
+    this.processNoise = 0.01;
+    this.measurementNoise = 1;
+  }
+
+  update(measureX, measureY) {
+    if (this.x === null) {
+      this.x = measureX;
+      this.y = measureY;
+      return { x: this.x, y: this.y };
+    }
+
+    this.px += this.processNoise;
+    this.py += this.processNoise;
+
+    const kx = this.px / (this.px + this.measurementNoise);
+    const ky = this.py / (this.py + this.measurementNoise);
+
+    this.x = this.x + kx * (measureX - this.x);
+    this.y = this.y + ky * (measureY - this.y);
+
+    this.px = (1 - kx) * this.px;
+    this.py = (1 - ky) * this.py;
+
+    return { x: this.x, y: this.y };
+  }
+
+  reset() {
+    this.x = null;
+    this.y = null;
+    this.px = 1;
+    this.py = 1;
+  }
+}
+
+// PnP求解器（增強版）
+class PnPSolver {
+  constructor() {
+    this.cameraMatrix = null;
+    this.distCoeffs = null;
+  }
+
+  updateCameraMatrix(fx, fy, cx, cy) {
+    if (this.cameraMatrix) this.cameraMatrix.delete();
+    this.cameraMatrix = cv.matFromArray(3, 3, cv.CV_64F, [
+      fx, 0, cx,
+      0, fy, cy,
+      0, 0, 1
+    ]);
+  }
+
+  solve(matched2DPoints) {
+    if (!this.cameraMatrix) return { success: false, error: '相機矩陣未初始化' };
+
+    try {
+      const object3D = matched2DPoints.map(p => {
+        const led = LED_CONFIG.points3D.find(l => l.id === p.id);
+        return [led.x, led.y, led.z];
+      });
+
+      const image2D = matched2DPoints.map(p => {
+        const { px, py } = mapOverlayToSource({ x: p.x, y: p.y });
+        return [px, py];
+      });
+
+      const objectPoints = cv.matFromArray(5, 1, cv.CV_32FC3, object3D.flat());
+      const imagePoints = cv.matFromArray(5, 1, cv.CV_32FC2, image2D.flat());
+
+      if (!this.distCoeffs) {
+        this.distCoeffs = cv.Mat.zeros(5, 1, cv.CV_64F);
+      }
+
+      const rvec = new cv.Mat();
+      const tvec = new cv.Mat();
+
+      const success = cv.solvePnP(
+        objectPoints,
+        imagePoints,
+        this.cameraMatrix,
+        this.distCoeffs,
+        rvec,
+        tvec,
+        false,
+        cv.SOLVEPNP_ITERATIVE
+      );
+
+      if (!success) {
+        throw new Error('PnP求解失敗');
+      }
+
+      const rmat = new cv.Mat();
+      cv.Rodrigues(rvec, rmat);
+
+      const pose = {
+        position: {
+          x: tvec.data64F[0],
+          y: tvec.data64F[1],
+          z: tvec.data64F[2]
+        },
+        distance: Math.sqrt(
+          Math.pow(tvec.data64F[0], 2) +
+          Math.pow(tvec.data64F[1], 2) +
+          Math.pow(tvec.data64F[2], 2)
+        ) / 1000,
+        rotation: this.rotationMatrixToEuler(rmat),
+        rvec: [rvec.data64F[0], rvec.data64F[1], rvec.data64F[2]],
+        tvec: [tvec.data64F[0], tvec.data64F[1], tvec.data64F[2]]
+      };
+
+      objectPoints.delete();
+      imagePoints.delete();
+      rvec.delete();
+      tvec.delete();
+      rmat.delete();
+
+      return { success: true, pose };
+
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  }
+
+  rotationMatrixToEuler(R) {
+    const r = [];
+    for (let i = 0; i < 3; i++) {
+      r[i] = [];
+      for (let j = 0; j < 3; j++) {
+        r[i][j] = R.doubleAt(i, j);
+      }
+    }
+
+    const sy = Math.sqrt(r[0][0] * r[0][0] + r[1][0] * r[1][0]);
+    const singular = sy < 1e-6;
+
+    let roll, pitch, yaw;
+    if (!singular) {
+      roll = Math.atan2(r[2][1], r[2][2]);
+      pitch = Math.atan2(-r[2][0], sy);
+      yaw = Math.atan2(r[1][0], r[0][0]);
+    } else {
+      roll = Math.atan2(-r[1][2], r[1][1]);
+      pitch = Math.atan2(-r[2][0], sy);
+      yaw = 0;
+    }
+
+    return {
+      roll: roll * 180 / Math.PI,
+      pitch: pitch * 180 / Math.PI,
+      yaw: yaw * 180 / Math.PI
+    };
+  }
+
+  dispose() {
+    if (this.cameraMatrix) this.cameraMatrix.delete();
+    if (this.distCoeffs) this.distCoeffs.delete();
+  }
+}
+
+// LED 6DoF定位系統（主系統）
+class LED6DoFLocalizer {
+  constructor() {
+    this.detector = null;
+    this.matcher = new GeometryMatcher();
+    this.solver = new PnPSolver();
+    this.kalmanFilters = {};
+    this.history = [];
+    this.maxHistory = 5;
+  }
+
+  updateHSVParams(hsvParams) {
+    this.detector = new BlueLEDDetector(hsvParams);
+  }
+
+  updateCameraParams(fx, fy, cx, cy) {
+    this.solver.updateCameraMatrix(fx, fy, cx, cy);
+  }
+
+  process(srcMat, crop) {
+    if (!this.detector) {
+      this.detector = new BlueLEDDetector();
+    }
+
+    const detectedPoints = this.detector.detect(srcMat, crop);
+
+    if (detectedPoints.length === 0) {
+      return { success: false, error: '未檢測到LED' };
+    }
+
+    const matchResult = this.matcher.match(detectedPoints);
+    if (!matchResult.success) {
+      return matchResult;
+    }
+
+    const smoothedPoints = this.applyKalmanFilter(matchResult.points);
+    const poseResult = this.solver.solve(smoothedPoints);
+
+    if (!poseResult.success) {
+      return poseResult;
+    }
+
+    this.history.push(poseResult.pose);
+    if (this.history.length > this.maxHistory) {
+      this.history.shift();
+    }
+
+    return {
+      success: true,
+      pose: poseResult.pose,
+      points: smoothedPoints,
+      metrics: matchResult.metrics,
+      stability: this.calculateStability()
+    };
+  }
+
+  applyKalmanFilter(points) {
+    return points.map(p => {
+      if (!this.kalmanFilters[p.id]) {
+        this.kalmanFilters[p.id] = new SimpleKalman();
+      }
+
+      const smoothed = this.kalmanFilters[p.id].update(p.x, p.y);
+
+      return {
+        ...p,
+        x: smoothed.x,
+        y: smoothed.y
+      };
+    });
+  }
+
+  calculateStability() {
+    if (this.history.length < 2) return 0;
+
+    const current = this.history[this.history.length - 1];
+    const previous = this.history[this.history.length - 2];
+
+    const positionDiff = Math.sqrt(
+      Math.pow(current.position.x - previous.position.x, 2) +
+      Math.pow(current.position.y - previous.position.y, 2) +
+      Math.pow(current.position.z - previous.position.z, 2)
+    );
+
+    return Math.max(0, 1 - positionDiff / 100);
+  }
+
+  reset() {
+    this.kalmanFilters = {};
+    this.history = [];
+  }
+
+  dispose() {
+    this.solver.dispose();
+  }
+}
+
+// ===================================================================
+
 const ui = {
   status: document.getElementById("status"),
   video: document.getElementById("video"),
@@ -110,6 +601,8 @@ const state = {
   captureSymbols: [],
   logLines: [],
   qualityLines: [],
+  localizer: null,  // 新增：6DoF定位器實例
+  useEnhancedLocalizer: true,  // 新增：使用增強版定位器
 };
 
 const offscreen = document.createElement("canvas");
@@ -251,6 +744,7 @@ async function startCamera() {
     ui.btnAutoHsv.disabled = false;
 
     estimateIntrinsics();
+    initLocalizer();  // 初始化6DoF定位器
 
     startFrameLoop();
   } catch (err) {
@@ -258,6 +752,28 @@ async function startCamera() {
     setStatus("Camera error");
     logLine("Camera access failed.");
   }
+}
+
+// 初始化6DoF定位器
+function initLocalizer() {
+  if (state.localizer) {
+    state.localizer.dispose();
+  }
+  state.localizer = new LED6DoFLocalizer();
+
+  // 更新HSV參數
+  state.localizer.updateHSVParams({
+    hMin: Number(ui.cfgHueMin.value),
+    hMax: Number(ui.cfgHueMax.value),
+    sMin: Number(ui.cfgSatMin.value),
+    vMin: Number(ui.cfgValMin.value)
+  });
+
+  // 更新相機內參
+  const { fx, fy, cx, cy } = getCameraMatrix();
+  state.localizer.updateCameraParams(fx, fy, cx, cy);
+
+  logLine("6DoF定位器已初始化");
 }
 
 function stopCamera() {
@@ -337,6 +853,8 @@ function updateDeviceInfo() {
 
 function drawOverlay() {
   overlayCtx.clearRect(0, 0, ui.overlay.width, ui.overlay.height);
+
+  // 繪製資料LED（3-LED系統）
   state.rois.forEach((roi, idx) => {
     const x = roi.x * ui.overlay.width;
     const y = roi.y * ui.overlay.height;
@@ -351,17 +869,82 @@ function drawOverlay() {
     overlayCtx.fillText(`LED ${idx + 1}`, x + 10, y - 10);
   });
 
-  state.locPoints.forEach((pt, idx) => {
-    const x = pt.x * ui.overlay.width;
-    const y = pt.y * ui.overlay.height;
-    overlayCtx.strokeStyle = "#6b7bff";
-    overlayCtx.lineWidth = 2;
-    overlayCtx.beginPath();
-    overlayCtx.arc(x, y, 6, 0, Math.PI * 2);
-    overlayCtx.stroke();
-    overlayCtx.fillStyle = "#6b7bff";
-    overlayCtx.fillText(`P${idx + 1}`, x + 8, y - 8);
-  });
+  // 繪製定位LED（5-LED系統）
+  if (state.locPoints.length === 5) {
+    // 根據ID繪製不同顏色
+    state.locPoints.forEach((pt) => {
+      const x = pt.x * ui.overlay.width;
+      const y = pt.y * ui.overlay.height;
+
+      // LED5（突出點）用綠色，其他用藍色
+      const color = pt.id === 5 ? '#00ff00' : '#00aaff';
+      const radius = pt.id === 5 ? 10 : 8;
+
+      overlayCtx.fillStyle = color;
+      overlayCtx.beginPath();
+      overlayCtx.arc(x, y, radius, 0, Math.PI * 2);
+      overlayCtx.fill();
+
+      // 繪製外圈
+      overlayCtx.strokeStyle = '#ffffff';
+      overlayCtx.lineWidth = 2;
+      overlayCtx.beginPath();
+      overlayCtx.arc(x, y, radius + 2, 0, Math.PI * 2);
+      overlayCtx.stroke();
+
+      // ID標籤
+      overlayCtx.fillStyle = '#ffffff';
+      overlayCtx.font = 'bold 14px monospace';
+      overlayCtx.fillText(`${pt.id}`, x + radius + 4, y + 5);
+    });
+
+    // 繪製底部矩形連線
+    const p1 = state.locPoints.find(p => p.id === 1);
+    const p2 = state.locPoints.find(p => p.id === 2);
+    const p3 = state.locPoints.find(p => p.id === 3);
+    const p4 = state.locPoints.find(p => p.id === 4);
+    const p5 = state.locPoints.find(p => p.id === 5);
+
+    if (p1 && p2 && p3 && p4) {
+      overlayCtx.strokeStyle = '#00aaff';
+      overlayCtx.lineWidth = 2;
+      overlayCtx.beginPath();
+      overlayCtx.moveTo(p1.x * ui.overlay.width, p1.y * ui.overlay.height);
+      overlayCtx.lineTo(p2.x * ui.overlay.width, p2.y * ui.overlay.height);
+      overlayCtx.lineTo(p3.x * ui.overlay.width, p3.y * ui.overlay.height);
+      overlayCtx.lineTo(p4.x * ui.overlay.width, p4.y * ui.overlay.height);
+      overlayCtx.closePath();
+      overlayCtx.stroke();
+
+      // 繪製中心到LED5的連線
+      if (p5) {
+        const centerX = (p1.x + p2.x + p3.x + p4.x) / 4 * ui.overlay.width;
+        const centerY = (p1.y + p2.y + p3.y + p4.y) / 4 * ui.overlay.height;
+
+        overlayCtx.strokeStyle = '#00ff00';
+        overlayCtx.lineWidth = 2;
+        overlayCtx.setLineDash([5, 5]);
+        overlayCtx.beginPath();
+        overlayCtx.moveTo(centerX, centerY);
+        overlayCtx.lineTo(p5.x * ui.overlay.width, p5.y * ui.overlay.height);
+        overlayCtx.stroke();
+        overlayCtx.setLineDash([]);
+      }
+    }
+  } else if (state.locPoints.length > 0) {
+    // 未匹配的點（灰色顯示）
+    state.locPoints.forEach((pt, idx) => {
+      const x = pt.x * ui.overlay.width;
+      const y = pt.y * ui.overlay.height;
+      overlayCtx.strokeStyle = "#888";
+      overlayCtx.lineWidth = 2;
+      overlayCtx.beginPath();
+      overlayCtx.arc(x, y, 6, 0, Math.PI * 2);
+      overlayCtx.stroke();
+      overlayCtx.fillStyle = "#888";
+      overlayCtx.fillText(`?${idx + 1}`, x + 8, y - 8);
+    });
+  }
 }
 
 function getCoverRect(srcW, srcH, dstW, dstH) {
@@ -878,6 +1461,65 @@ function autoDetectLocPoints() {
   if (!state.stream) return;
 
   state.autoDetectBusy = true;
+
+  // 使用增強版定位器
+  if (state.useEnhancedLocalizer && state.localizer) {
+    autoDetectWithEnhancedLocalizer();
+  } else {
+    autoDetectWithLegacyMethod();
+  }
+
+  state.autoDetectBusy = false;
+}
+
+// 增強版定位器自動檢測
+function autoDetectWithEnhancedLocalizer() {
+  offCtx.drawImage(ui.video, 0, 0, offscreen.width, offscreen.height);
+  const cropRaw = getCoverRect(
+    offscreen.width,
+    offscreen.height,
+    ui.overlay.width,
+    ui.overlay.height
+  );
+  const crop = {
+    sx: Math.round(cropRaw.sx),
+    sy: Math.round(cropRaw.sy),
+    sw: Math.round(cropRaw.sw),
+    sh: Math.round(cropRaw.sh),
+  };
+
+  const imgData = offCtx.getImageData(crop.sx, crop.sy, crop.sw, crop.sh);
+  const srcMat = cv.matFromImageData(imgData);
+
+  // 更新HSV參數到定位器
+  state.localizer.updateHSVParams({
+    hMin: Number(ui.cfgHueMin.value),
+    hMax: Number(ui.cfgHueMax.value),
+    sMin: Number(ui.cfgSatMin.value),
+    vMin: Number(ui.cfgValMin.value)
+  });
+
+  // 處理檢測
+  const result = state.localizer.process(srcMat, crop);
+
+  srcMat.delete();
+
+  if (result.success) {
+    state.locPoints = result.points;
+    startTracking(result.points);
+
+    // 更新UI
+    updateLocalizationUI(result);
+    drawOverlay();
+
+    ui.locStatus.textContent = `定位成功 | 穩定性: ${(result.stability * 100).toFixed(0)}%`;
+  } else {
+    ui.locStatus.textContent = `檢測失敗: ${result.error}`;
+  }
+}
+
+// 傳統方法自動檢測（保留向後兼容）
+function autoDetectWithLegacyMethod() {
   offCtx.drawImage(ui.video, 0, 0, offscreen.width, offscreen.height);
   const cropRaw = getCoverRect(
     offscreen.width,
@@ -1011,7 +1653,37 @@ function autoDetectLocPoints() {
   kernel.delete();
   contours.delete();
   hierarchy.delete();
-  state.autoDetectBusy = false;
+}
+
+// 更新定位UI顯示
+function updateLocalizationUI(result) {
+  if (!result || !result.success) return;
+
+  const { pose, stability, metrics } = result;
+
+  // 位置信息
+  ui.locPos.textContent =
+    `X: ${pose.position.x.toFixed(1)}mm | ` +
+    `Y: ${pose.position.y.toFixed(1)}mm | ` +
+    `Z: ${pose.position.z.toFixed(1)}mm`;
+
+  // 旋轉信息
+  ui.locRot.textContent =
+    `Roll: ${pose.rotation.roll.toFixed(1)}° | ` +
+    `Pitch: ${pose.rotation.pitch.toFixed(1)}° | ` +
+    `Yaw: ${pose.rotation.yaw.toFixed(1)}°`;
+
+  // 距離
+  ui.locDist.textContent = `${pose.distance.toFixed(2)} m`;
+
+  // 狀態和質量指標
+  const stabilityPercent = (stability * 100).toFixed(0);
+  const aspectRatio = metrics.aspectRatio.toFixed(2);
+  const ratioError = (metrics.ratioError * 100).toFixed(1);
+
+  ui.locStatus.textContent =
+    `穩定性: ${stabilityPercent}% | ` +
+    `比例: ${aspectRatio} (誤差${ratioError}%)`;
 }
 
 function estimateLedQuality() {
@@ -1354,6 +2026,8 @@ function updateFps(ts) {
 
 function processFrame(ts) {
   updateFps(ts);
+
+  // 5-LED定位處理
   if (state.autoLocating) {
     const tracked = updateTracking();
     const intervalMs = 300;
@@ -1361,8 +2035,37 @@ function processFrame(ts) {
       state.lastAutoDetectTs = ts;
       autoDetectLocPoints();
     }
+
+    // 即時PnP求解（如果有匹配的5個點）
+    if (state.locPoints.length === 5 && state.useEnhancedLocalizer && state.localizer) {
+      offCtx.drawImage(ui.video, 0, 0, offscreen.width, offscreen.height);
+      const cropRaw = getCoverRect(
+        offscreen.width,
+        offscreen.height,
+        ui.overlay.width,
+        ui.overlay.height
+      );
+      const crop = {
+        sx: Math.round(cropRaw.sx),
+        sy: Math.round(cropRaw.sy),
+        sw: Math.round(cropRaw.sw),
+        sh: Math.round(cropRaw.sh),
+      };
+      const imgData = offCtx.getImageData(crop.sx, crop.sy, crop.sw, crop.sh);
+      const srcMat = cv.matFromImageData(imgData);
+
+      const result = state.localizer.process(srcMat, crop);
+      srcMat.delete();
+
+      if (result.success) {
+        state.locPoints = result.points;
+        updateLocalizationUI(result);
+        drawOverlay();
+      }
+    }
   }
 
+  // 3-LED數據解碼處理
   if (state.decoding && state.rois.length === 3) {
     offCtx.drawImage(ui.video, 0, 0, offscreen.width, offscreen.height);
     const brightness = state.rois.map((roi) => computeBrightness(roi));
@@ -1377,6 +2080,7 @@ function processFrame(ts) {
 
     attemptDecode(symbol);
   }
+
   updateProcessedView();
   requestNextFrame();
 }
@@ -1434,15 +2138,32 @@ ui.chkBgSub.addEventListener("change", (event) => {
     ui.chkRoiStretch,
     ui.chkBlueMask,
     ui.chkMaskOnly,
-    ui.cfgHueMin,
-    ui.cfgHueMax,
-    ui.cfgSatMin,
-    ui.cfgValMin,
     ui.chkOnlyEnhance,
     ui.chkEnhance,
   ].forEach((el) => {
     el.addEventListener("input", updateEnhanceLabels);
   });
+
+// HSV參數變更時更新定位器
+[
+  ui.cfgHueMin,
+  ui.cfgHueMax,
+  ui.cfgSatMin,
+  ui.cfgValMin,
+].forEach((el) => {
+  el.addEventListener("input", () => {
+    updateEnhanceLabels();
+    // 更新定位器HSV參數
+    if (state.localizer) {
+      state.localizer.updateHSVParams({
+        hMin: Number(ui.cfgHueMin.value),
+        hMax: Number(ui.cfgHueMax.value),
+        sMin: Number(ui.cfgSatMin.value),
+        vMin: Number(ui.cfgValMin.value)
+      });
+    }
+  });
+});
 
 updateEnhanceLabels();
 
