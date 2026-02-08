@@ -876,7 +876,6 @@ function autoDetectLocPoints() {
   if (!state.stream) return;
 
   state.autoDetectBusy = true;
-  const enhance = getEnhanceConfig();
   offCtx.drawImage(ui.video, 0, 0, offscreen.width, offscreen.height);
   const cropRaw = getCoverRect(
     offscreen.width,
@@ -891,19 +890,32 @@ function autoDetectLocPoints() {
     sh: Math.round(cropRaw.sh),
   };
   const imgData = offCtx.getImageData(crop.sx, crop.sy, crop.sw, crop.sh);
-  const src = cv.matFromImageData(imgData);
-  const hsv = new cv.Mat();
-  cv.cvtColor(src, hsv, cv.COLOR_RGBA2RGB);
-  cv.cvtColor(hsv, hsv, cv.COLOR_RGB2HSV);
+  const diff = new Uint8Array(crop.sw * crop.sh);
+  const hist = new Uint32Array(256);
+  const data = imgData.data;
+  for (let i = 0, j = 0; i < data.length; i += 4, j += 1) {
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
+    const v = Math.max(0, b - (r + g) / 2);
+    diff[j] = v;
+    hist[v] += 1;
+  }
+  const total = diff.length;
+  let cum = 0;
+  let thresh = 40;
+  const target = total * 0.995;
+  for (let i = 0; i < 256; i += 1) {
+    cum += hist[i];
+    if (cum >= target) {
+      thresh = Math.max(20, i);
+      break;
+    }
+  }
 
-  const hueMin = Math.max(0, Math.min(179, Math.round((enhance.hueMin / 360) * 179)));
-  const hueMax = Math.max(0, Math.min(179, Math.round((enhance.hueMax / 360) * 179)));
-  const satMin = Math.round(enhance.satMin * 255);
-  const valMin = Math.round(enhance.valMin * 255);
-  const lower = new cv.Mat(hsv.rows, hsv.cols, hsv.type(), [hueMin, satMin, valMin, 0]);
-  const upper = new cv.Mat(hsv.rows, hsv.cols, hsv.type(), [hueMax, 255, 255, 255]);
-  const mask = new cv.Mat();
-  cv.inRange(hsv, lower, upper, mask);
+  const mask = new cv.Mat(crop.sh, crop.sw, cv.CV_8UC1);
+  mask.data.set(diff);
+  cv.threshold(mask, mask, thresh, 255, cv.THRESH_BINARY);
 
   const kernel = cv.Mat.ones(3, 3, cv.CV_8U);
   cv.morphologyEx(mask, mask, cv.MORPH_OPEN, kernel);
@@ -993,10 +1005,6 @@ function autoDetectLocPoints() {
     }
   }
 
-  src.delete();
-  hsv.delete();
-  lower.delete();
-  upper.delete();
   mask.delete();
   kernel.delete();
   contours.delete();
