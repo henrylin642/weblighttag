@@ -598,8 +598,8 @@ function getEnhanceConfig() {
 // Simplified config for 5-LED positioning only
 function getConfig() {
   return {
-    targetWidth: 1920,  // 提高到 1080p
-    targetHeight: 1080,
+    targetWidth: 1280,  // 720p 較通用
+    targetHeight: 720,
     targetFps: 30,
     targetExposureUs: 8000,
     targetIso: 400
