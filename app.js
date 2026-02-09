@@ -1770,18 +1770,21 @@ ui.btnAutoHsv.addEventListener("click", autoCalibrateHsv);
 
 updateEnhanceLabels();
 
-// 顯示選項事件監聽器
+// 顯示選項事件監聯器 - 立即更新畫面
 ui.chkShowMask.addEventListener("change", () => {
   state.showMask = ui.chkShowMask.checked;
   console.log('showMask:', state.showMask);
+  if (state.stream) updateProcessedView();
 });
 ui.chkMaskOnly.addEventListener("change", () => {
   state.maskOnly = ui.chkMaskOnly.checked;
   console.log('maskOnly:', state.maskOnly);
+  if (state.stream) updateProcessedView();
 });
 ui.chkOnlyEnhance.addEventListener("change", () => {
   state.onlyEnhance = ui.chkOnlyEnhance.checked;
   console.log('onlyEnhance:', state.onlyEnhance);
+  if (state.stream) updateProcessedView();
 });
 
 window.addEventListener("beforeunload", () => {
