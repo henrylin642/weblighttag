@@ -562,59 +562,26 @@ function setStatus(text) {
   ui.status.textContent = text;
 }
 
+// Removed - no longer needed for 5-LED positioning
 function updateEnhanceLabels() {
-  ui.valBrightness.textContent = Number(ui.cfgBrightness.value).toFixed(2);
-  ui.valContrast.textContent = Number(ui.cfgContrast.value).toFixed(2);
-  ui.valGamma.textContent = Number(ui.cfgGamma.value).toFixed(2);
-  ui.valHighPass.textContent = Number(ui.cfgHighPass.value).toFixed(1);
-  ui.valBgDim.textContent = Number(ui.cfgBgDim.value).toFixed(2);
-  ui.valHueMin.textContent = Number(ui.cfgHueMin.value).toFixed(0);
-  ui.valHueMax.textContent = Number(ui.cfgHueMax.value).toFixed(0);
-  ui.valSatMin.textContent = Number(ui.cfgSatMin.value).toFixed(2);
-  ui.valValMin.textContent = Number(ui.cfgValMin.value).toFixed(2);
+  // No-op
 }
 
+// Removed - no longer needed for 5-LED positioning
 function getEnhanceConfig() {
   return {
-    enabled: ui.chkEnhance.checked,
-    channel: ui.cfgChannel.value,
-    brightness: Number(ui.cfgBrightness.value),
-    contrast: Number(ui.cfgContrast.value),
-    gamma: Number(ui.cfgGamma.value),
-    highPass: ui.chkHighPass.checked,
-    highPassGain: Number(ui.cfgHighPass.value),
-    roiStretch: ui.chkRoiStretch.checked,
-    onlyEnhanced: ui.chkOnlyEnhance.checked,
-    blueMask: ui.chkBlueMask.checked,
-    maskOnly: ui.chkMaskOnly.checked,
-    hueMin: Number(ui.cfgHueMin.value),
-    hueMax: Number(ui.cfgHueMax.value),
-    satMin: Number(ui.cfgSatMin.value),
-    valMin: Number(ui.cfgValMin.value),
-    bgDim: Number(ui.cfgBgDim.value),
+    enabled: false
   };
 }
 
+// Simplified config for 5-LED positioning only
 function getConfig() {
-  const [w, h] = ui.cfgRes.value.split("x").map((v) => Number(v));
   return {
-    targetWidth: w,
-    targetHeight: h,
-    targetFps: Number(ui.cfgFps.value),
-    targetExposureUs: Number(ui.cfgExposure.value),
-    targetIso: Number(ui.cfgIso.value),
-    framesPerPacket: Number(ui.cfgFrames.value),
-    bitsPerFrame: Number(ui.cfgBitsPerFrame.value),
-    preamble: ui.cfgPreamble.value
-      .split(",")
-      .map((v) => Number(v.trim()))
-      .filter((v) => Number.isFinite(v)),
-    crcLen: Number(ui.cfgCrcLen.value),
-    crcPoly: parseInt(ui.cfgCrcPoly.value, 16),
-    crcInit: parseInt(ui.cfgCrcInit.value, 16),
-    crcXor: parseInt(ui.cfgCrcXor.value, 16),
-    idStart: Number(ui.cfgIdStart.value),
-    idLen: Number(ui.cfgIdLen.value),
+    targetWidth: 1280,
+    targetHeight: 720,
+    targetFps: 30,
+    targetExposureUs: 8000,
+    targetIso: 400
   };
 }
 
@@ -664,11 +631,6 @@ async function startCamera() {
     setStatus("Camera ready");
     ui.btnStart.disabled = true;
     ui.btnStop.disabled = false;
-    ui.btnAuto.disabled = false;
-    ui.btnClear.disabled = false;
-    ui.btnDecode.disabled = false;
-    ui.chkBgSub.disabled = false;
-    ui.chkEnhance.disabled = false;
     ui.btnLocClear.disabled = false;
     ui.btnLocAuto.disabled = false;
     ui.btnLocSolve.disabled = false;
@@ -693,18 +655,19 @@ function initLocalizer() {
   }
   state.localizer = new LED6DoFLocalizer();
 
-  // 更新HSV參數
+  // 使用默認HSV參數（藍色LED）
   state.localizer.updateHSVParams({
-    hMin: Number(ui.cfgHueMin.value),
-    hMax: Number(ui.cfgHueMax.value),
-    sMin: Number(ui.cfgSatMin.value),
-    vMin: Number(ui.cfgValMin.value)
+    hMin: 192,    // 藍色範圍開始
+    hMax: 260,    // 藍色範圍結束
+    sMin: 0.74,   // 最小飽和度
+    vMin: 0.70    // 最小明度
   });
 
   // 更新相機內參
   const { fx, fy, cx, cy } = getCameraMatrix();
   state.localizer.updateCameraParams(fx, fy, cx, cy);
 
+  console.log("6DoF定位器已初始化 (默認HSV: H=192-260, S=0.74, V=0.70)");
   logLine("6DoF定位器已初始化");
 }
 
@@ -742,29 +705,9 @@ function resizeCanvases() {
   state.bgModel = null;
 }
 
+// Simplified - no longer displays device info
 function updateDeviceInfo() {
-  if (!state.track) return;
-  const settings = state.track.getSettings();
-  ui.infoFps.textContent = settings.frameRate ? `${settings.frameRate.toFixed(1)} fps` : "-";
-  ui.infoExposure.textContent = settings.exposureTime
-    ? `${Math.round(settings.exposureTime * 1_000_000)} us`
-    : "-";
-  ui.infoIso.textContent = settings.iso ? String(settings.iso) : "-";
-  ui.infoFocus.textContent = settings.focusMode || "-";
-
-  const cfg = getConfig();
-  const fpsOk = settings.frameRate && Math.abs(settings.frameRate - cfg.targetFps) <= 3;
-  const targetExposureSec = cfg.targetExposureUs / 1_000_000;
-  const exposureOk = settings.exposureTime && settings.exposureTime <= targetExposureSec * 1.2;
-  const stableOk = !!settings.frameRate;
-
-  if (fpsOk && exposureOk && stableOk) {
-    ui.supportHint.textContent = "Device looks compatible."
-    ui.supportHint.className = "support-hint good";
-  } else {
-    ui.supportHint.textContent = "Device may be unsupported. Results can be unstable.";
-    ui.supportHint.className = "support-hint bad";
-  }
+  // No-op: device info display removed
 }
 
 function drawOverlay() {
