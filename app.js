@@ -598,8 +598,8 @@ function getEnhanceConfig() {
 // Simplified config for 5-LED positioning only
 function getConfig() {
   return {
-    targetWidth: 1280,
-    targetHeight: 720,
+    targetWidth: 1920,  // 提高到 1080p
+    targetHeight: 1080,
     targetFps: 30,
     targetExposureUs: 8000,
     targetIso: 400
@@ -624,6 +624,7 @@ async function startCamera() {
         width: { ideal: getConfig().targetWidth },
         height: { ideal: getConfig().targetHeight },
         frameRate: { ideal: getConfig().targetFps, max: 60 },
+        focusMode: { ideal: "continuous" },  // 請求連續自動對焦
       },
       audio: false,
     });
