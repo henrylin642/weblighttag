@@ -620,9 +620,9 @@ function applySupportedConstraints(track, desired) {
 async function startCamera() {
   try {
     setStatus("Requesting camera...");
-    // 最簡約束 - 只要求視頻，避免任何約束導致失敗
+    // 使用後置相機
     const stream = await navigator.mediaDevices.getUserMedia({
-      video: true,
+      video: { facingMode: "environment" },
       audio: false,
     });
 
