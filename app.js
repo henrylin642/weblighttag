@@ -846,8 +846,8 @@ function mapOverlayToSource(roi) {
 
 // Removed updateProcessedView - no longer needed for 5-LED positioning
 function updateProcessedView() {
-  // 如果沒有啟用任何顯示選項，清除畫面
-  if (!state.showMask && !state.onlyEnhance) {
+  // 如果沒有啟用任何顯示選項，顯示原始視頻
+  if (!state.showMask && !state.maskOnly && !state.onlyEnhance) {
     processedCtx.clearRect(0, 0, ui.processed.width, ui.processed.height);
     ui.processed.style.opacity = "0";
     ui.video.style.opacity = "1";
@@ -866,7 +866,7 @@ function updateProcessedView() {
     ui.processed.style.mixBlendMode = "screen";
   }
 
-  // 繪製當前畫面
+  // 繪製當前畫面到 offscreen
   offCtx.drawImage(ui.video, 0, 0, offscreen.width, offscreen.height);
   const crop = getCoverRect(
     offscreen.width,
@@ -874,16 +874,24 @@ function updateProcessedView() {
     ui.processed.width,
     ui.processed.height
   );
+
+  // 如果只是顯示強化畫面（無遮罩），直接繪製
+  if (!state.showMask && !state.maskOnly) {
+    processedCtx.drawImage(
+      offscreen,
+      crop.sx, crop.sy, crop.sw, crop.sh,
+      0, 0, ui.processed.width, ui.processed.height
+    );
+    return;
+  }
+
+  // 需要處理遮罩，使用 procCanvas
+  procCanvas.width = ui.processed.width;
+  procCanvas.height = ui.processed.height;
   procCtx.drawImage(
     offscreen,
-    crop.sx,
-    crop.sy,
-    crop.sw,
-    crop.sh,
-    0,
-    0,
-    procCanvas.width,
-    procCanvas.height
+    crop.sx, crop.sy, crop.sw, crop.sh,
+    0, 0, procCanvas.width, procCanvas.height
   );
 
   const image = procCtx.getImageData(0, 0, procCanvas.width, procCanvas.height);
@@ -896,50 +904,48 @@ function updateProcessedView() {
   const satMin = Number(ui.cfgSatMin.value);
   const valMin = Number(ui.cfgValMin.value);
 
-  // 如果啟用藍燈遮罩
-  if (state.showMask || state.maskOnly) {
-    for (let i = 0; i < length; i += 1) {
-      const idx = i * 4;
-      const r = data[idx] / 255;
-      const g = data[idx + 1] / 255;
-      const b = data[idx + 2] / 255;
+  // 處理藍燈遮罩
+  for (let i = 0; i < length; i += 1) {
+    const idx = i * 4;
+    const r = data[idx] / 255;
+    const g = data[idx + 1] / 255;
+    const b = data[idx + 2] / 255;
 
-      // RGB to HSV 轉換
-      const max = Math.max(r, g, b);
-      const min = Math.min(r, g, b);
-      const delta = max - min;
-      let h = 0;
-      if (delta !== 0) {
-        if (max === r) h = ((g - b) / delta) % 6;
-        else if (max === g) h = (b - r) / delta + 2;
-        else h = (r - g) / delta + 4;
-        h *= 60;
-        if (h < 0) h += 360;
+    // RGB to HSV 轉換
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    const delta = max - min;
+    let h = 0;
+    if (delta !== 0) {
+      if (max === r) h = ((g - b) / delta) % 6;
+      else if (max === g) h = (b - r) / delta + 2;
+      else h = (r - g) / delta + 4;
+      h *= 60;
+      if (h < 0) h += 360;
+    }
+    const s = max === 0 ? 0 : delta / max;
+    const v = max;
+
+    // 檢查是否在藍色範圍內
+    const inHue = h >= hueMin && h <= hueMax;
+    const isBlueLed = inHue && s >= satMin && v >= valMin;
+
+    if (state.maskOnly) {
+      // 只顯示遮罩：藍色區域顯示白色，其他顯示黑色
+      if (isBlueLed) {
+        data[idx] = 255;
+        data[idx + 1] = 255;
+        data[idx + 2] = 255;
+      } else {
+        data[idx] = 0;
+        data[idx + 1] = 0;
+        data[idx + 2] = 0;
       }
-      const s = max === 0 ? 0 : delta / max;
-      const v = max;
-
-      // 檢查是否在藍色範圍內
-      const inHue = h >= hueMin && h <= hueMax;
-      const isBlueLed = inHue && s >= satMin && v >= valMin;
-
-      if (state.maskOnly) {
-        // 只顯示遮罩：藍色區域顯示白色，其他顯示黑色
-        if (isBlueLed) {
-          data[idx] = 255;     // R
-          data[idx + 1] = 255; // G
-          data[idx + 2] = 255; // B
-        } else {
-          data[idx] = 0;
-          data[idx + 1] = 0;
-          data[idx + 2] = 0;
-        }
-      } else if (state.showMask && !isBlueLed) {
-        // 顯示遮罩：非藍色區域暗化
-        data[idx] = Math.floor(data[idx] * 0.3);
-        data[idx + 1] = Math.floor(data[idx + 1] * 0.3);
-        data[idx + 2] = Math.floor(data[idx + 2] * 0.3);
-      }
+    } else if (!isBlueLed) {
+      // 顯示遮罩：非藍色區域暗化
+      data[idx] = Math.floor(data[idx] * 0.3);
+      data[idx + 1] = Math.floor(data[idx + 1] * 0.3);
+      data[idx + 2] = Math.floor(data[idx + 2] * 0.3);
     }
   }
 
