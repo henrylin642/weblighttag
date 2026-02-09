@@ -78,8 +78,8 @@ function detectBlueCandidates(imgData, crop, offscreen) {
   const candidates = [];
 
   try {
-    // ===== 優化1: ROI中心限制（70%區域）=====
-    const roiScale = 0.70;
+    // ===== 優化1: ROI中心限制（放寬到90%）=====
+    const roiScale = 0.90;  // 放寬從70%到90%
     const roiW = Math.round(crop.sw * roiScale);
     const roiH = Math.round(crop.sh * roiScale);
     const roiX = Math.round((crop.sw - roiW) / 2);
@@ -104,15 +104,15 @@ function detectBlueCandidates(imgData, crop, offscreen) {
     const blueDiff = new cv.Mat();
     cv.subtract(B, RG_avg, blueDiff);
 
-    // 根據環境模式選擇閾值
+    // 根據環境模式選擇閾值（放寬）
     const envMode = window._detectionEnvMode || 'normal';
     const thresholds = {
-      dark: 35,     // 暗環境
-      normal: 40,   // 正常室內
-      bright: 50    // 明亮環境
+      dark: 25,     // 暗環境（降低從35到25）
+      normal: 30,   // 正常室內（降低從40到30）
+      bright: 40    // 明亮環境（降低從50到40）
     };
-    const thresh = thresholds[envMode] || 40;
-    console.log(`藍光差分閾值: ${thresh} (${envMode}模式)`);
+    const thresh = thresholds[envMode] || 30;
+    console.log(`⚙️ 藍光差分閾值: ${thresh} (${envMode}模式)`);
 
     // 計算平均亮度用於診斷
     const meanVal = cv.mean(blueDiff)[0];
@@ -143,8 +143,8 @@ function detectBlueCandidates(imgData, crop, offscreen) {
       const cnt = contours.get(i);
       const area = cv.contourArea(cnt);
 
-      // 面積過濾（10-500 px²）
-      if (area < 10 || area > 500) continue;
+      // 面積過濾（放寬到5-1000 px²）
+      if (area < 5 || area > 1000) continue;
 
       const m = cv.moments(cnt);
       if (m.m00 === 0) continue;
@@ -157,8 +157,8 @@ function detectBlueCandidates(imgData, crop, offscreen) {
       const peri = cv.arcLength(cnt, true);
       const circularity = peri === 0 ? 0 : (4 * Math.PI * area) / (peri * peri);
 
-      // 放寬圓度要求
-      if (circularity < 0.20) continue;
+      // 大幅放寬圓度要求（從0.20降到0.15）
+      if (circularity < 0.15) continue;
 
       // 計算該點的藍光差分亮度（用於Top-N排序）
       const px = Math.round(cx);
@@ -180,11 +180,18 @@ function detectBlueCandidates(imgData, crop, offscreen) {
     }
 
     // ===== 優化4: Top-N最亮點篩選 =====
-    // 先按亮度排序，取Top-10
+    // 先按亮度排序，取Top-15（增加從10）
     candidates.sort((a, b) => b.brightness - a.brightness);
-    const topN = candidates.slice(0, 10);
+    const topN = candidates.slice(0, 15);
 
-    console.log(`Top-10最亮點篩選完成 (從 ${candidates.length} 個候選點)`);
+    console.log(`✨ Top-15最亮點篩選完成 (從 ${candidates.length} 個候選點)`);
+
+    // 輸出Top-5的亮度信息
+    if (topN.length > 0) {
+      const top5 = topN.slice(0, 5).map((c, i) =>
+        `#${i+1}:${c.brightness.toFixed(0)}`
+      ).join(', ');
+      console.log(`💡 Top-5亮度: ${top5}`);
 
     // 清理
     R.delete(); G.delete(); B.delete();

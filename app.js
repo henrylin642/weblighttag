@@ -496,13 +496,6 @@ const ui = {
   processed: document.getElementById("processed"),
   btnStart: document.getElementById("btnStart"),
   btnStop: document.getElementById("btnStop"),
-  btnAuto: document.getElementById("btnAuto"),
-  btnClear: document.getElementById("btnClear"),
-  btnDecode: document.getElementById("btnDecode"),
-  chkBgSub: document.getElementById("chkBgSub"),
-  chkEnhance: document.getElementById("chkEnhance"),
-  modeDataLed: document.getElementById("modeDataLed"),
-  modeLocLed: document.getElementById("modeLocLed"),
   btnLocClear: document.getElementById("btnLocClear"),
   btnLocAuto: document.getElementById("btnLocAuto"),
   btnLocSolve: document.getElementById("btnLocSolve"),
@@ -518,62 +511,7 @@ const ui = {
   ledQuality: document.getElementById("ledQuality"),
   btnLedQuality: document.getElementById("btnLedQuality"),
   qualityLog: document.getElementById("qualityLog"),
-  infoFps: document.getElementById("infoFps"),
-  infoExposure: document.getElementById("infoExposure"),
-  infoIso: document.getElementById("infoIso"),
-  infoFocus: document.getElementById("infoFocus"),
-  supportHint: document.getElementById("supportHint"),
-  liveFps: document.getElementById("liveFps"),
-  liveBrightness: document.getElementById("liveBrightness"),
-  liveThresholds: document.getElementById("liveThresholds"),
-  liveSymbol: document.getElementById("liveSymbol"),
-  bar1: document.getElementById("bar1"),
-  bar2: document.getElementById("bar2"),
-  bar3: document.getElementById("bar3"),
-  bar1Val: document.getElementById("bar1Val"),
-  bar2Val: document.getElementById("bar2Val"),
-  bar3Val: document.getElementById("bar3Val"),
-  decodeStatus: document.getElementById("decodeStatus"),
-  decodeId: document.getElementById("decodeId"),
-  decodeCrc: document.getElementById("decodeCrc"),
   log: document.getElementById("log"),
-  cfgRes: document.getElementById("cfgRes"),
-  cfgFps: document.getElementById("cfgFps"),
-  cfgExposure: document.getElementById("cfgExposure"),
-  cfgIso: document.getElementById("cfgIso"),
-  cfgFrames: document.getElementById("cfgFrames"),
-  cfgBitsPerFrame: document.getElementById("cfgBitsPerFrame"),
-  cfgPreamble: document.getElementById("cfgPreamble"),
-  cfgCrcLen: document.getElementById("cfgCrcLen"),
-  cfgCrcPoly: document.getElementById("cfgCrcPoly"),
-  cfgCrcInit: document.getElementById("cfgCrcInit"),
-  cfgCrcXor: document.getElementById("cfgCrcXor"),
-  cfgIdStart: document.getElementById("cfgIdStart"),
-  cfgIdLen: document.getElementById("cfgIdLen"),
-  cfgChannel: document.getElementById("cfgChannel"),
-  cfgBrightness: document.getElementById("cfgBrightness"),
-  cfgContrast: document.getElementById("cfgContrast"),
-  cfgGamma: document.getElementById("cfgGamma"),
-  chkHighPass: document.getElementById("chkHighPass"),
-  cfgHighPass: document.getElementById("cfgHighPass"),
-  chkRoiStretch: document.getElementById("chkRoiStretch"),
-  chkBlueMask: document.getElementById("chkBlueMask"),
-  chkMaskOnly: document.getElementById("chkMaskOnly"),
-  chkOnlyEnhance: document.getElementById("chkOnlyEnhance"),
-  cfgBgDim: document.getElementById("cfgBgDim"),
-  valBrightness: document.getElementById("valBrightness"),
-  valContrast: document.getElementById("valContrast"),
-  valGamma: document.getElementById("valGamma"),
-  valHighPass: document.getElementById("valHighPass"),
-  valBgDim: document.getElementById("valBgDim"),
-  cfgHueMin: document.getElementById("cfgHueMin"),
-  cfgHueMax: document.getElementById("cfgHueMax"),
-  cfgSatMin: document.getElementById("cfgSatMin"),
-  cfgValMin: document.getElementById("cfgValMin"),
-  valHueMin: document.getElementById("valHueMin"),
-  valHueMax: document.getElementById("valHueMax"),
-  valSatMin: document.getElementById("valSatMin"),
-  valValMin: document.getElementById("valValMin"),
   btnAutoHsv: document.getElementById("btnAutoHsv"),
   cfgEnvMode: document.getElementById("cfgEnvMode"),
 };
@@ -581,32 +519,22 @@ const ui = {
 const state = {
   stream: null,
   track: null,
-  decoding: false,
-  rois: [],
-  roiSize: 18,
   lastFrameTs: 0,
   fpsSamples: [],
-  brightnessBuffers: [[], [], []],
-  smoothValues: [null, null, null],
-  showBgSub: false,
-  bgModel: null,
   locPoints: [],
-  locCandidates: [],  // 新增：所有候選LED點（用於診斷顯示）
+  locCandidates: [],  // 所有候選LED點（用於診斷顯示）
   cvReady: false,
   autoLocating: false,
   trackPoints: null,
   lastTrackTs: 0,
   lastAutoDetectTs: 0,
   autoDetectBusy: false,
-  symbolStream: [],
-  capturing: false,
-  captureSymbols: [],
   logLines: [],
   qualityLines: [],
-  localizer: null,  // 新增：6DoF定位器實例
-  useEnhancedLocalizer: true,  // 新增：使用增強版定位器
-  kalmanFilters: {},  // 新增：卡爾曼濾波器
-  pnpSolver: null,  // 新增：PnP求解器
+  localizer: null,  // 6DoF定位器實例
+  useEnhancedLocalizer: true,  // 使用增強版定位器
+  kalmanFilters: {},  // 卡爾曼濾波器
+  pnpSolver: null,  // PnP求解器
 };
 
 const offscreen = document.createElement("canvas");
@@ -786,33 +714,17 @@ function stopCamera() {
   }
   state.stream = null;
   state.track = null;
-  state.decoding = false;
-  state.capturing = false;
-  state.symbolStream = [];
-  state.captureSymbols = [];
   ui.video.srcObject = null;
   setStatus("Stopped");
   ui.btnStart.disabled = false;
   ui.btnStop.disabled = true;
-  ui.btnAuto.disabled = true;
-  ui.btnClear.disabled = true;
-  ui.btnDecode.disabled = true;
-  ui.chkBgSub.disabled = true;
-  ui.chkBgSub.checked = false;
-  ui.chkEnhance.disabled = true;
-  ui.chkEnhance.checked = true;
   ui.btnLocClear.disabled = true;
   ui.btnLocAuto.disabled = true;
   ui.btnLocSolve.disabled = true;
   ui.btnLedQuality.disabled = true;
   ui.btnAutoHsv.disabled = true;
   state.autoLocating = false;
-  ui.btnLocAuto.textContent = "開始自動偵測";
-  state.showBgSub = false;
-  state.bgModel = null;
-  processedCtx.clearRect(0, 0, ui.processed.width, ui.processed.height);
-  ui.processed.style.opacity = "0";
-  ui.video.style.opacity = "1";
+  ui.btnLocAuto.textContent = "🎯 開始自動偵測";
   clearLocPoints();
 }
 
@@ -858,22 +770,7 @@ function updateDeviceInfo() {
 function drawOverlay() {
   overlayCtx.clearRect(0, 0, ui.overlay.width, ui.overlay.height);
 
-  // 繪製資料LED（3-LED系統）
-  state.rois.forEach((roi, idx) => {
-    const x = roi.x * ui.overlay.width;
-    const y = roi.y * ui.overlay.height;
-    overlayCtx.strokeStyle = "#6be1ff";
-    overlayCtx.lineWidth = 2;
-    overlayCtx.beginPath();
-    overlayCtx.arc(x, y, 8, 0, Math.PI * 2);
-    overlayCtx.stroke();
-    overlayCtx.fillStyle = "rgba(107,225,255,0.2)";
-    overlayCtx.fillRect(x - roi.size / 2, y - roi.size / 2, roi.size, roi.size);
-    overlayCtx.fillStyle = "#ffffff";
-    overlayCtx.fillText(`LED ${idx + 1}`, x + 10, y - 10);
-  });
-
-  // 繪製定位LED系統
+  // 繪製定位LED系統（僅5-LED）
   // 第一階段：繪製所有候選點（灰色小圓圈）用於診斷
   if (state.locCandidates && state.locCandidates.length > 0) {
     overlayCtx.fillStyle = 'rgba(128, 128, 128, 0.4)';
@@ -981,211 +878,18 @@ function mapOverlayToSource(roi) {
   return { px, py, scale };
 }
 
-function getRoiRects() {
-  if (!state.rois.length || ui.overlay.width === 0) return [];
-  const scale = procCanvas.width / ui.overlay.width;
-  return state.rois.map((roi) => {
-    const size = Math.max(6, Math.round(roi.size * scale));
-    const x = Math.round(roi.x * procCanvas.width - size / 2);
-    const y = Math.round(roi.y * procCanvas.height - size / 2);
-    return {
-      x: Math.max(0, x),
-      y: Math.max(0, y),
-      w: Math.min(procCanvas.width, x + size) - Math.max(0, x),
-      h: Math.min(procCanvas.height, y + size) - Math.max(0, y),
-    };
-  });
-}
+// Removed getRoiRects function (3-LED data capture)
 
+// Removed updateProcessedView - no longer needed for 5-LED positioning
 function updateProcessedView() {
-  const enhance = getEnhanceConfig();
-  if (!enhance.enabled) {
-    processedCtx.clearRect(0, 0, ui.processed.width, ui.processed.height);
-    ui.processed.style.opacity = "0";
-    ui.video.style.opacity = "1";
-    ui.processed.style.mixBlendMode = "normal";
-    return;
-  }
-
-  ui.processed.style.opacity = enhance.onlyEnhanced ? "1" : "0.65";
-  ui.processed.style.mixBlendMode = enhance.onlyEnhanced ? "normal" : "screen";
-  ui.video.style.opacity = enhance.onlyEnhanced ? "0" : "1";
-
-  offCtx.drawImage(ui.video, 0, 0, offscreen.width, offscreen.height);
-  const crop = getCoverRect(
-    offscreen.width,
-    offscreen.height,
-    ui.processed.width,
-    ui.processed.height
-  );
-  procCtx.drawImage(
-    offscreen,
-    crop.sx,
-    crop.sy,
-    crop.sw,
-    crop.sh,
-    0,
-    0,
-    procCanvas.width,
-    procCanvas.height
-  );
-  const image = procCtx.getImageData(0, 0, procCanvas.width, procCanvas.height);
-  const { data } = image;
-  const length = procCanvas.width * procCanvas.height;
-  const gray = new Float32Array(length);
-  const mask = new Uint8Array(length);
-
-  for (let i = 0; i < length; i += 1) {
-    const idx = i * 4;
-    const r = data[idx];
-    const g = data[idx + 1];
-    const b = data[idx + 2];
-    let v = 0;
-    switch (enhance.channel) {
-      case "red":
-        v = r;
-        break;
-      case "green":
-        v = g;
-        break;
-      case "blue":
-        v = b;
-        break;
-      default:
-        v = (r + g + b) / 3;
-        break;
-    }
-    gray[i] = v;
-  }
-
-  if (enhance.blueMask) {
-    for (let i = 0; i < length; i += 1) {
-      const idx = i * 4;
-      const r = data[idx] / 255;
-      const g = data[idx + 1] / 255;
-      const b = data[idx + 2] / 255;
-      const max = Math.max(r, g, b);
-      const min = Math.min(r, g, b);
-      const delta = max - min;
-      let h = 0;
-      if (delta !== 0) {
-        if (max === r) h = ((g - b) / delta) % 6;
-        else if (max === g) h = (b - r) / delta + 2;
-        else h = (r - g) / delta + 4;
-        h *= 60;
-        if (h < 0) h += 360;
-      }
-      const s = max === 0 ? 0 : delta / max;
-      const v = max;
-      const inHue = h >= enhance.hueMin && h <= enhance.hueMax;
-      const ok = inHue && s >= enhance.satMin && v >= enhance.valMin;
-      mask[i] = ok ? 255 : 0;
-    }
-  }
-
-  if (state.showBgSub) {
-    if (!state.bgModel || state.bgModel.length !== length) {
-      state.bgModel = new Float32Array(length);
-      state.bgModel.set(gray);
-    }
-    const alpha = 0.02;
-    const gain = 4.0;
-    for (let i = 0; i < length; i += 1) {
-      const bg = state.bgModel[i];
-      const nextBg = bg * (1 - alpha) + gray[i] * alpha;
-      state.bgModel[i] = nextBg;
-      gray[i] = Math.max(0, gray[i] - nextBg) * gain;
-    }
-  }
-
-  if (enhance.highPass) {
-    const blur = new Float32Array(length);
-    const w = procCanvas.width;
-    const h = procCanvas.height;
-    for (let y = 0; y < h; y += 1) {
-      for (let x = 0; x < w; x += 1) {
-        let sum = 0;
-        let count = 0;
-        for (let dy = -1; dy <= 1; dy += 1) {
-          for (let dx = -1; dx <= 1; dx += 1) {
-            const nx = Math.max(0, Math.min(w - 1, x + dx));
-            const ny = Math.max(0, Math.min(h - 1, y + dy));
-            sum += gray[ny * w + nx];
-            count += 1;
-          }
-        }
-        blur[y * w + x] = sum / count;
-      }
-    }
-    for (let i = 0; i < length; i += 1) {
-      gray[i] = Math.max(0, gray[i] - blur[i]) * enhance.highPassGain;
-    }
-  }
-
-  const roiRects = enhance.roiStretch ? getRoiRects() : [];
-  const roiStats = roiRects.map((rect) => {
-    let min = 255;
-    let max = 0;
-    for (let y = rect.y; y < rect.y + rect.h; y += 1) {
-      for (let x = rect.x; x < rect.x + rect.w; x += 1) {
-        const v = gray[y * procCanvas.width + x];
-        min = Math.min(min, v);
-        max = Math.max(max, v);
-      }
-    }
-    return { min, max };
-  });
-
-  for (let i = 0; i < length; i += 1) {
-    let v = gray[i];
-    if (enhance.blueMask) {
-      if (enhance.maskOnly) {
-        v = mask[i];
-      } else if (mask[i] === 0) {
-        v *= enhance.bgDim;
-      }
-    }
-    if (enhance.roiStretch && roiRects.length) {
-      const x = i % procCanvas.width;
-      const y = Math.floor(i / procCanvas.width);
-      let inRoi = false;
-      for (let r = 0; r < roiRects.length; r += 1) {
-        const rect = roiRects[r];
-        if (x >= rect.x && x < rect.x + rect.w && y >= rect.y && y < rect.y + rect.h) {
-          const stats = roiStats[r];
-          const denom = Math.max(1, stats.max - stats.min);
-          v = ((v - stats.min) / denom) * 255;
-          inRoi = true;
-          break;
-        }
-      }
-      if (!inRoi) {
-        v *= enhance.bgDim;
-      }
-    }
-
-    v = Math.max(0, Math.min(255, v));
-    let f = v / 255;
-    f = (f - 0.5) * enhance.contrast + 0.5;
-    f = f * enhance.brightness;
-    f = Math.max(0, Math.min(1, f));
-    f = Math.pow(f, 1 / enhance.gamma);
-    const out = Math.max(0, Math.min(255, f * 255));
-    const idx = i * 4;
-    data[idx] = out;
-    data[idx + 1] = out;
-    data[idx + 2] = out;
-    data[idx + 3] = 255;
-  }
-
-  procCtx.putImageData(image, 0, 0);
-  processedCtx.clearRect(0, 0, ui.processed.width, ui.processed.height);
-  processedCtx.drawImage(procCanvas, 0, 0, ui.processed.width, ui.processed.height);
+  // No-op: 5-LED positioning doesn't need image enhancement
 }
 
 function toggleAutoLocating() {
   state.autoLocating = !state.autoLocating;
-  ui.btnLocAuto.textContent = state.autoLocating ? "停止自動偵測" : "開始自動偵測";
+  console.log(`🎬 切換自動定位: ${state.autoLocating ? '開啟' : '關閉'}`);
+  logLine(`[系統] 自動定位已${state.autoLocating ? '啟動' : '停止'}`);
+  ui.btnLocAuto.textContent = state.autoLocating ? "停止自動偵測" : "🎯 開始自動偵測";
   if (!state.autoLocating) {
     state.trackPoints = null;
     state.autoDetectBusy = false;
@@ -1231,26 +935,7 @@ function updateTracking() {
   return true;
 }
 
-function addRoiFromClick(event) {
-  if (!state.stream) return;
-  const rect = ui.overlay.getBoundingClientRect();
-  const x = (event.clientX - rect.left) / rect.width;
-  const y = (event.clientY - rect.top) / rect.height;
-  if (ui.modeLocLed.checked) {
-    if (state.locPoints.length >= 5) return;
-    state.locPoints.push({ x, y });
-  } else {
-    if (state.rois.length >= 3) return;
-    state.rois.push({ x, y, size: state.roiSize });
-  }
-  drawOverlay();
-}
-
-function clearRois() {
-  state.rois = [];
-  state.brightnessBuffers = [[], [], []];
-  drawOverlay();
-}
+// Removed 3-LED ROI selection functions
 
 function clearLocPoints() {
   state.locPoints = [];
@@ -1261,91 +946,7 @@ function clearLocPoints() {
   drawOverlay();
 }
 
-function autoDetectRois() {
-  if (!state.stream) return;
-  offCtx.drawImage(ui.video, 0, 0, offscreen.width, offscreen.height);
-  const imageData = offCtx.getImageData(0, 0, offscreen.width, offscreen.height);
-  const { data } = imageData;
-  const points = [];
-  let sum = 0;
-  let count = 0;
-
-  for (let y = 0; y < offscreen.height; y += 4) {
-    for (let x = 0; x < offscreen.width; x += 4) {
-      const idx = (y * offscreen.width + x) * 4;
-      const brightness = (data[idx] + data[idx + 1] + data[idx + 2]) / 3;
-      sum += brightness;
-      count += 1;
-      if (brightness > 200) {
-        points.push({ x, y, brightness });
-      }
-    }
-  }
-
-  const mean = sum / Math.max(1, count);
-  const candidates = points.filter((p) => p.brightness > mean + 20);
-  candidates.sort((a, b) => b.brightness - a.brightness);
-
-  const crop = getCoverRect(
-    offscreen.width,
-    offscreen.height,
-    ui.overlay.width,
-    ui.overlay.height
-  );
-
-  const selected = [];
-  const minDist = offscreen.width * 0.08;
-  for (const p of candidates) {
-    if (selected.length >= 3) break;
-    if (
-      p.x < crop.sx ||
-      p.x > crop.sx + crop.sw ||
-      p.y < crop.sy ||
-      p.y > crop.sy + crop.sh
-    ) {
-      continue;
-    }
-    const tooClose = selected.some((s) => {
-      const dx = s.x - p.x;
-      const dy = s.y - p.y;
-      return Math.hypot(dx, dy) < minDist;
-    });
-    if (!tooClose) selected.push(p);
-  }
-
-  if (selected.length === 3) {
-    state.rois = selected.map((p) => ({
-      x: (p.x - crop.sx) / crop.sw,
-      y: (p.y - crop.sy) / crop.sh,
-      size: state.roiSize,
-    }));
-    logLine("Auto detect succeeded.");
-  } else {
-    logLine("Auto detect failed. Click to set LEDs.");
-  }
-  drawOverlay();
-}
-
-function computeBrightness(roi) {
-  const { px, py, scale } = mapOverlayToSource(roi);
-  const x = Math.round(px);
-  const y = Math.round(py);
-  const size = Math.max(4, Math.round(roi.size * scale));
-  const half = Math.floor(size / 2);
-  const startX = Math.max(0, x - half);
-  const startY = Math.max(0, y - half);
-  const endX = Math.min(offscreen.width - 1, x + half);
-  const endY = Math.min(offscreen.height - 1, y + half);
-  const w = endX - startX + 1;
-  const h = endY - startY + 1;
-  const image = offCtx.getImageData(startX, startY, w, h);
-  const { data } = image;
-  let sum = 0;
-  for (let i = 0; i < data.length; i += 4) {
-    sum += (data[i] + data[i + 1] + data[i + 2]) / 3;
-  }
-  return sum / (data.length / 4);
-}
+// Removed 3-LED data capture functions (autoDetectRois, computeBrightness, etc.)
 
 function computeBlueDiffAt(x, y, size) {
   const half = Math.floor(size / 2);
@@ -1462,19 +1063,29 @@ function scorePnP(points) {
 }
 
 function autoDetectLocPoints() {
-  if (state.autoDetectBusy) return;
+  if (state.autoDetectBusy) {
+    console.log('⏸️ 檢測忙碌中，跳過');
+    return;
+  }
   if (!ensureCvReady()) {
+    console.log('⚠️ OpenCV 尚未就緒');
     ui.locStatus.textContent = "OpenCV 尚未就緒";
     return;
   }
-  if (!state.stream) return;
+  if (!state.stream) {
+    console.log('⚠️ 視頻流未就緒');
+    return;
+  }
 
+  console.log('🔄 autoDetectLocPoints() 被調用');
   state.autoDetectBusy = true;
 
   // 使用增強版定位器
   if (state.useEnhancedLocalizer && state.localizer) {
+    console.log('✅ 使用增強版定位器');
     autoDetectWithEnhancedLocalizer();
   } else {
+    console.log(`⚠️ 使用傳統方法 (useEnhancedLocalizer=${state.useEnhancedLocalizer}, localizer=${!!state.localizer})`);
     autoDetectWithLegacyMethod();
   }
 
@@ -1483,6 +1094,9 @@ function autoDetectLocPoints() {
 
 // 增強版定位器自動檢測
 function autoDetectWithEnhancedLocalizer() {
+  console.log('🎯 === 開始自動檢測 ===');
+  logLine('[檢測] 啟動幾何結構檢測');
+
   offCtx.drawImage(ui.video, 0, 0, offscreen.width, offscreen.height);
   const cropRaw = getCoverRect(
     offscreen.width,
@@ -1497,14 +1111,24 @@ function autoDetectWithEnhancedLocalizer() {
     sh: Math.round(cropRaw.sh),
   };
 
+  console.log(`📐 視頻尺寸: ${offscreen.width}×${offscreen.height}`);
+  console.log(`📐 Crop區域: ${crop.sw}×${crop.sh} @ (${crop.sx},${crop.sy})`);
+
   // 使用基於幾何結構的檢測（方案3優化版）
   const envMode = ui.cfgEnvMode ? ui.cfgEnvMode.value : 'normal';
+  console.log(`🌍 環境模式: ${envMode}`);
+
   const result = geometryBasedDetect(offCtx, crop, offscreen, { envMode });
+  console.log(`📊 檢測結果: success=${result.success}, candidates=${result.candidates?.length || 0}`);
 
   // 保存候選點用於顯示診斷信息
   state.locCandidates = result.candidates || [];
+  console.log(`💾 候選點數量: ${state.locCandidates.length}`);
 
   if (result.success) {
+    console.log('✅ 幾何結構驗證通過，開始PnP求解');
+    logLine(`[檢測] 找到5個LED點，準備計算姿態`);
+
     // 應用卡爾曼濾波器平滑點位
     const smoothedPoints = result.points.map(p => {
       if (!state.kalmanFilters) state.kalmanFilters = {};
@@ -1521,8 +1145,11 @@ function autoDetectWithEnhancedLocalizer() {
     // 計算PnP姿態
     if (!state.pnpSolver) {
       state.pnpSolver = new PnPSolver();
+      console.log('🔧 PnP求解器已初始化');
     }
+    console.log('🎲 開始PnP姿態求解...');
     const poseResult = state.pnpSolver.solve(smoothedPoints);
+    console.log(`🎲 PnP求解結果: success=${poseResult.success}`);
 
     if (poseResult.success) {
       // 更新UI
@@ -1544,11 +1171,14 @@ function autoDetectWithEnhancedLocalizer() {
   } else {
     // 顯示失敗原因和候選點數量
     const candidateCount = result.candidates ? result.candidates.length : 0;
+    console.log(`❌ 檢測失敗: ${result.error} (候選點: ${candidateCount})`);
+    logLine(`[檢測] 失敗: ${result.error}`);
     ui.locStatus.textContent = `❌ ${result.error} (候選點: ${candidateCount})`;
 
     // 仍然繪製候選點用於診斷
     drawOverlay();
   }
+  console.log('🏁 === 自動檢測結束 ===\n');
 }
 
 // 傳統方法自動檢測（保留向後兼容）
@@ -1952,135 +1582,15 @@ function solvePnP() {
   tvec.delete();
 }
 
-function updateBrightnessBuffers(values) {
-  values.forEach((val, idx) => {
-    const buf = state.brightnessBuffers[idx];
-    buf.push(val);
-    if (buf.length > 20) buf.shift();
-  });
-}
-
-function computeNormalized(brightness) {
-  return brightness.map((value, idx) => {
-    const buf = state.brightnessBuffers[idx];
-    if (!buf.length) return 0;
-    const min = Math.min(...buf);
-    const max = Math.max(...buf);
-    const denom = Math.max(1, max - min);
-    return (value - min) / denom;
-  });
-}
-
-function smoothNormalized(values) {
-  const alpha = 0.5;
-  return values.map((val, idx) => {
-    const prev = state.smoothValues[idx];
-    const next = prev === null ? val : prev * (1 - alpha) + val * alpha;
-    state.smoothValues[idx] = next;
-    return next;
-  });
-}
-
-function bitsFromSymbol(symbol, bitsPerFrame) {
-  const bits = [];
-  for (let i = 0; i < bitsPerFrame; i += 1) {
-    bits.push((symbol >> i) & 1);
-  }
-  return bits;
-}
-
-function bitsToNumber(bits) {
-  return bits.reduce((acc, bit, idx) => acc | (bit << idx), 0);
-}
-
-function computeCrc16(bits, poly, init, xorOut, width) {
-  let crc = init;
-  const mask = (1 << width) - 1;
-  for (const bit of bits) {
-    const top = (crc >> (width - 1)) & 1;
-    crc = ((crc << 1) & mask) | bit;
-    if (top) crc ^= poly;
-  }
-  return (crc ^ xorOut) & mask;
-}
-
-function attemptDecode(symbol) {
-  const cfg = getConfig();
-  const totalBits = cfg.framesPerPacket * cfg.bitsPerFrame;
-
-  if (!cfg.preamble.length) return;
-
-  state.symbolStream.push(symbol);
-  if (state.symbolStream.length > cfg.preamble.length + cfg.framesPerPacket) {
-    state.symbolStream.shift();
-  }
-
-  if (!state.capturing) {
-    const slice = state.symbolStream.slice(-cfg.preamble.length);
-    const match = slice.every((v, i) => v === cfg.preamble[i]);
-    if (match) {
-      state.capturing = true;
-      state.captureSymbols = [];
-      ui.decodeStatus.textContent = "Preamble matched";
-    }
-    return;
-  }
-
-  state.captureSymbols.push(symbol);
-  if (state.captureSymbols.length < cfg.framesPerPacket) return;
-
-  const bits = state.captureSymbols.flatMap((s) => bitsFromSymbol(s, cfg.bitsPerFrame));
-  if (bits.length !== totalBits) {
-    state.capturing = false;
-    return;
-  }
-
-  const crcLen = cfg.crcLen;
-  let crcOk = true;
-  let crcValue = null;
-
-  if (crcLen > 0 && bits.length > crcLen) {
-    const payloadBits = bits.slice(0, bits.length - crcLen);
-    const crcBits = bits.slice(bits.length - crcLen);
-    const expected = bitsToNumber(crcBits);
-    const actual = computeCrc16(payloadBits, cfg.crcPoly, cfg.crcInit, cfg.crcXor, crcLen);
-    crcValue = { expected, actual };
-    crcOk = expected === actual;
-  }
-
-  if (crcOk) {
-    const idBits = bits.slice(cfg.idStart, cfg.idStart + cfg.idLen);
-    const idValue = bitsToNumber(idBits);
-    ui.decodeId.textContent = `0x${idValue.toString(16).padStart(Math.ceil(cfg.idLen / 4), "0")}`;
-    ui.decodeStatus.textContent = "ID decoded";
-    ui.decodeCrc.textContent = crcValue ? `ok (0x${crcValue.actual.toString(16)})` : "-";
-    logLine(`ID decoded: 0x${idValue.toString(16)}`);
-  } else {
-    ui.decodeStatus.textContent = "CRC failed";
-    ui.decodeCrc.textContent = crcValue
-      ? `expected 0x${crcValue.expected.toString(16)}, got 0x${crcValue.actual.toString(16)}`
-      : "-";
-    logLine("CRC failed. Waiting for next packet.");
-  }
-
-  state.capturing = false;
-  state.captureSymbols = [];
-}
-
-function updateLiveMetrics(brightness, thresholds, symbol) {
-  ui.liveBrightness.textContent = brightness.map((v) => v.toFixed(1)).join(" / ");
-  ui.liveThresholds.textContent = thresholds.map((v) => v.toFixed(1)).join(" / ");
-  ui.liveSymbol.textContent = symbol !== null ? String(symbol) : "-";
-
-  const vals = thresholds.map((v) => Math.max(0, Math.min(1, v)));
-  const pct = vals.map((v) => `${Math.round(v * 100)}%`);
-  ui.bar1.style.width = pct[0];
-  ui.bar2.style.width = pct[1];
-  ui.bar3.style.width = pct[2];
-  ui.bar1Val.textContent = vals[0].toFixed(2);
-  ui.bar2Val.textContent = vals[1].toFixed(2);
-  ui.bar3Val.textContent = vals[2].toFixed(2);
-}
+// Removed all 3-LED data decoding functions:
+// - updateBrightnessBuffers
+// - computeNormalized
+// - smoothNormalized
+// - bitsFromSymbol
+// - bitsToNumber
+// - computeCrc16
+// - attemptDecode
+// - updateLiveMetrics
 
 function updateFps(ts) {
   if (state.lastFrameTs) {
@@ -2135,21 +1645,7 @@ function processFrame(ts) {
     }
   }
 
-  // 3-LED數據解碼處理
-  if (state.decoding && state.rois.length === 3) {
-    offCtx.drawImage(ui.video, 0, 0, offscreen.width, offscreen.height);
-    const brightness = state.rois.map((roi) => computeBrightness(roi));
-    updateBrightnessBuffers(brightness);
-    const normalized = computeNormalized(brightness);
-    const smoothed = smoothNormalized(normalized);
-    const thresholds = [0.5, 0.5, 0.5];
-
-    const bits = smoothed.map((value, i) => (value > thresholds[i] ? 1 : 0));
-    const symbol = bits.reduce((acc, bit, idx) => acc | (bit << idx), 0);
-    updateLiveMetrics(brightness, smoothed, symbol);
-
-    attemptDecode(symbol);
-  }
+  // Removed 3-LED data decoding logic
 
   updateProcessedView();
   requestNextFrame();
@@ -2170,49 +1666,14 @@ function startFrameLoop() {
   requestNextFrame();
 }
 
-function toggleDecode() {
-  state.decoding = !state.decoding;
-  ui.btnDecode.textContent = state.decoding ? "Stop Decode" : "Start Decode";
-  ui.decodeStatus.textContent = state.decoding ? "Decoding" : "Idle";
-  if (state.decoding) {
-    state.symbolStream = [];
-    state.captureSymbols = [];
-    state.capturing = false;
-  }
-}
-
-ui.overlay.addEventListener("click", addRoiFromClick);
+// Event listeners
 ui.btnStart.addEventListener("click", startCamera);
 ui.btnStop.addEventListener("click", stopCamera);
-ui.btnAuto.addEventListener("click", autoDetectRois);
-ui.btnClear.addEventListener("click", clearRois);
-ui.btnDecode.addEventListener("click", toggleDecode);
 ui.btnLocClear.addEventListener("click", clearLocPoints);
 ui.btnLocAuto.addEventListener("click", toggleAutoLocating);
 ui.btnLocSolve.addEventListener("click", solvePnP);
 ui.btnLedQuality.addEventListener("click", estimateLedQuality);
 ui.btnAutoHsv.addEventListener("click", autoCalibrateHsv);
-ui.chkBgSub.addEventListener("change", (event) => {
-  state.showBgSub = event.target.checked;
-  state.bgModel = null;
-});
-
-  [
-    ui.cfgBrightness,
-    ui.cfgContrast,
-    ui.cfgGamma,
-    ui.cfgHighPass,
-    ui.cfgBgDim,
-    ui.cfgChannel,
-    ui.chkHighPass,
-    ui.chkRoiStretch,
-    ui.chkBlueMask,
-    ui.chkMaskOnly,
-    ui.chkOnlyEnhance,
-    ui.chkEnhance,
-  ].forEach((el) => {
-    el.addEventListener("input", updateEnhanceLabels);
-  });
 
 // HSV參數變更時更新定位器
 [
