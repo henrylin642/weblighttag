@@ -508,6 +508,8 @@ const ui = {
   locRot: document.getElementById("locRot"),
   locDist: document.getElementById("locDist"),
   camRes: document.getElementById("camRes"),
+  camFps: document.getElementById("camFps"),
+  camDpr: document.getElementById("camDpr"),
   ledQuality: document.getElementById("ledQuality"),
   btnLedQuality: document.getElementById("btnLedQuality"),
   qualityLog: document.getElementById("qualityLog"),
@@ -643,7 +645,16 @@ async function startCamera() {
     window.addEventListener("resize", resizeCanvases);
 
     updateDeviceInfo();
-    ui.camRes.textContent = `${offscreen.width} x ${offscreen.height}`;
+    // 顯示詳細相機資訊
+    const actualWidth = ui.video.videoWidth;
+    const actualHeight = ui.video.videoHeight;
+    const dpr = window.devicePixelRatio || 1;
+    ui.camRes.textContent = `${actualWidth} × ${actualHeight}`;
+    ui.camDpr.textContent = dpr.toFixed(2);
+    // 獲取實際 FPS
+    const settings = state.track.getSettings();
+    ui.camFps.textContent = settings.frameRate ? settings.frameRate.toFixed(1) : '-';
+    logLine(`📐 視頻: ${actualWidth}×${actualHeight}, FPS: ${settings.frameRate || '?'}, DPR: ${dpr}`);
     setStatus("Camera ready");
     ui.btnStart.disabled = true;
     ui.btnStop.disabled = false;

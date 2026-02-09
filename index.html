@@ -19,7 +19,7 @@
         <div>
           <h1>Antigravity Optical ID Reader</h1>
           <p>Web-based LED optical ID decoding (96-bit payload → 16-bit core ID)</p>
-          <p style="font-size: 11px; color: #666; margin-top: 4px;">v1.2.4 (Build: 2026-02-09)</p>
+          <p style="font-size: 11px; color: #666; margin-top: 4px;">v1.2.5 (Build: 2026-02-09)</p>
         </div>
         <div class="status" id="status">Idle</div>
       </header>
@@ -140,9 +140,19 @@
           </div>
           <div class="output-row">
             <div>
-              <div class="label">解析度</div>
+              <div class="label">視頻解析度</div>
               <div id="camRes">-</div>
             </div>
+            <div>
+              <div class="label">實際 FPS</div>
+              <div id="camFps">-</div>
+            </div>
+            <div>
+              <div class="label">DPR</div>
+              <div id="camDpr">-</div>
+            </div>
+          </div>
+          <div class="output-row">
             <div>
               <div class="label">藍燈品質</div>
               <div id="ledQuality">-</div>
