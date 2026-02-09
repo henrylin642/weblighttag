@@ -8,97 +8,41 @@
   --danger: #ff6b6b;
   --good: #6bff95;
   --border: #222a35;
+  --bottom-h: 160px; /* ~5 lines of log */
 }
 
 * { box-sizing: border-box; }
-body {
+html, body {
   margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
   font-family: "Space Grotesk", "IBM Plex Sans", "Segoe UI", sans-serif;
-  background: radial-gradient(circle at top, #0f1722, #0b0f13 55%);
+  background: #000;
   color: var(--text);
 }
 
-.app {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 24px;
-}
-
-.header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 20px;
-}
-
-.header h1 {
-  margin: 0 0 8px 0;
-  font-size: 26px;
-  letter-spacing: 0.5px;
-}
-
-.header p {
-  margin: 0;
-  color: var(--muted);
-}
-
-.status {
-  background: var(--panel-alt);
-  border: 1px solid var(--border);
-  padding: 10px 16px;
-  border-radius: 8px;
-  font-weight: 600;
-}
-
-.main {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 16px;
-}
-
-.panel {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 16px;
-}
-
-.video-panel {
-  grid-column: span 2;
-  align-self: start;
-}
-
-.video-fixed {
+/* ── Full-screen video layer ── */
+.video-layer {
   position: fixed;
-  top: calc(env(safe-area-inset-top, 0px) + 8px);
-  left: 50%;
-  transform: translateX(-50%);
-  width: min(1200px, calc(100% - 32px));
-  z-index: 20;
+  inset: 0;
+  bottom: var(--bottom-h);
+  background: #000;
+  z-index: 1;
 }
 
 .video-wrap {
-  position: relative;
-  width: 100%;
-  aspect-ratio: 16 / 9;
-  background: #05070a;
-  border-radius: 12px;
+  position: absolute;
+  inset: 0;
   overflow: hidden;
-  border: 1px solid var(--border);
 }
 
-.video-spacer {
-  width: 100%;
-  aspect-ratio: 16 / 9;
-}
-
-video, canvas {
+video, .video-wrap canvas {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
-  object-fit: contain;  /* 不裁切，保持原始比例 */
+  object-fit: contain;
 }
 
 #processed {
@@ -111,11 +55,244 @@ video, canvas {
   z-index: 2;
 }
 
-.video-actions {
+/* ── Top-left status HUD overlay ── */
+.hud-top {
+  position: fixed;
+  top: calc(env(safe-area-inset-top, 0px) + 8px);
+  left: 8px;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  pointer-events: none;
+}
+
+.hud-top > * {
+  pointer-events: auto;
+}
+
+.hud-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: rgba(255,255,255,0.85);
+  text-shadow: 0 1px 4px rgba(0,0,0,0.8);
+}
+
+.hud-version {
+  font-size: 10px;
+  color: rgba(255,255,255,0.45);
+  text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+}
+
+/* ── Top-right status badge ── */
+.status {
+  position: fixed;
+  top: calc(env(safe-area-inset-top, 0px) + 8px);
+  right: 8px;
+  z-index: 30;
+  background: rgba(18,24,32,0.85);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid var(--border);
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* ── Floating action buttons over video ── */
+.hud-actions {
+  position: fixed;
+  bottom: calc(var(--bottom-h) + 8px);
+  left: 8px;
+  right: 8px;
+  z-index: 30;
   display: flex;
   flex-wrap: wrap;
+  gap: 6px;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.hud-actions > * {
+  pointer-events: auto;
+}
+
+/* ── Toggle button for bottom panel expand ── */
+.panel-toggle {
+  position: fixed;
+  bottom: var(--bottom-h);
+  right: 8px;
+  z-index: 35;
+  background: rgba(18,24,32,0.85);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid var(--border);
+  color: var(--accent);
+  border-radius: 8px 8px 0 0;
+  padding: 4px 12px;
+  font-size: 11px;
+  cursor: pointer;
+  font-weight: 600;
+  transform: translateY(0);
+  transition: transform 0.2s;
+}
+
+/* ── Bottom panel (log + controls) ── */
+.bottom-panel {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: var(--bottom-h);
+  z-index: 20;
+  background: rgba(18,24,32,0.92);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  transition: height 0.25s ease;
+  overflow: hidden;
+}
+
+.bottom-panel.expanded {
+  height: 65vh;
+}
+
+.bottom-panel.expanded ~ .video-layer {
+  bottom: 65vh;
+}
+
+.bottom-panel.expanded ~ .hud-actions {
+  bottom: calc(65vh + 8px);
+}
+
+.bottom-panel.expanded ~ .panel-toggle {
+  bottom: 65vh;
+}
+
+/* ── Tab bar inside bottom panel ── */
+.tab-bar {
+  display: flex;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.tab-bar button {
+  flex-shrink: 0;
+  background: transparent;
+  color: var(--muted);
+  border: none;
+  border-radius: 0;
+  padding: 8px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  white-space: nowrap;
+}
+
+.tab-bar button.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+/* ── Tab content area ── */
+.tab-content {
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.tab-page {
+  display: none;
+  padding: 8px 10px;
+}
+
+.tab-page.active {
+  display: block;
+}
+
+/* ── Log panel ── */
+.log {
+  background: #0b1016;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
+  font-size: 11px;
+  white-space: pre-wrap;
+  overflow-y: auto;
+  min-height: 60px;
+  max-height: 100%;
+  color: var(--muted);
+}
+
+/* ── Compact controls inside tabs ── */
+.config-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 8px;
-  margin-top: 12px;
+  margin-bottom: 8px;
+}
+
+.output-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 12px;
+  margin-bottom: 8px;
+  padding: 8px;
+  background: #1a2a3a;
+  border-radius: 6px;
+}
+
+label {
+  display: flex;
+  flex-direction: column;
+  font-size: 11px;
+  color: var(--muted);
+  gap: 4px;
+}
+
+input {
+  background: #0b1016;
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 5px 7px;
+  font-size: 12px;
+}
+
+select {
+  background: #0b1016;
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 5px 7px;
+  font-size: 12px;
+}
+
+input[type="range"] {
+  padding: 0;
+}
+
+label span {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.label {
+  color: var(--muted);
+  font-size: 11px;
 }
 
 button {
@@ -123,7 +300,8 @@ button {
   color: #051018;
   border: none;
   border-radius: 8px;
-  padding: 8px 12px;
+  padding: 7px 11px;
+  font-size: 12px;
   font-weight: 600;
   cursor: pointer;
 }
@@ -133,136 +311,28 @@ button:disabled {
   cursor: not-allowed;
 }
 
-.toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--muted);
-  padding: 4px 8px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: #0b1016;
-}
-
-.toggle input {
-  margin: 0;
-}
-
-.hint {
-  margin-top: 8px;
-  color: var(--muted);
-  font-size: 13px;
-}
-
-.device-grid,
-.config-grid,
-.metrics,
-.output-row {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  gap: 12px;
-}
-
-.viz {
-  margin-top: 16px;
-}
-
-.bars {
-  margin-top: 8px;
-  display: grid;
-  gap: 8px;
-}
-
-.bar-row {
-  display: grid;
-  grid-template-columns: 60px 1fr 48px;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  color: var(--muted);
-}
-
-.bar-track {
-  height: 10px;
-  background: #0b1016;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  overflow: hidden;
-}
-
-.bar-fill {
-  height: 100%;
-  width: 0%;
-  background: linear-gradient(90deg, #6be1ff, #6bff95);
-  transition: width 0.1s linear;
-}
-
-label {
+.video-actions {
   display: flex;
-  flex-direction: column;
-  font-size: 12px;
-  color: var(--muted);
+  flex-wrap: wrap;
   gap: 6px;
+  margin-bottom: 8px;
 }
 
-input {
-  background: #0b1016;
-  border: 1px solid var(--border);
-  color: var(--text);
-  border-radius: 6px;
+/* ── Readout values ── */
+.output-row > div {
+  background: rgba(11,16,22,0.6);
   padding: 6px 8px;
-  font-size: 13px;
-}
-
-select {
-  background: #0b1016;
-  border: 1px solid var(--border);
-  color: var(--text);
   border-radius: 6px;
-  padding: 6px 8px;
-  font-size: 13px;
-}
-
-input[type="range"] {
-  padding: 0;
-}
-
-label span {
-  font-size: 12px;
-  color: var(--muted);
-}
-
-.label {
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.support-hint {
-  margin-top: 10px;
-  font-size: 12px;
-}
-
-.support-hint.bad { color: var(--danger); }
-.support-hint.good { color: var(--good); }
-
-.output {
-  grid-column: span 2;
-}
-
-.log {
-  margin-top: 12px;
-  background: #0b1016;
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 10px;
-  min-height: 80px;
-  font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
-  font-size: 12px;
-  white-space: pre-wrap;
 }
 
-@media (max-width: 900px) {
-  .video-panel, .output { grid-column: span 1; }
-  .video-fixed { width: calc(100% - 24px); }
+.output-row .label {
+  margin-bottom: 2px;
+}
+
+/* ── When panel is collapsed, ensure video fills properly ── */
+@supports (padding: env(safe-area-inset-bottom)) {
+  .bottom-panel {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
 }
