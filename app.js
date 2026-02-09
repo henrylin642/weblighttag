@@ -620,10 +620,13 @@ function applySupportedConstraints(track, desired) {
 async function startCamera() {
   try {
     setStatus("Requesting camera...");
-    // 使用最簡單的設置，避免約束問題
+    // 請求 16:9 解析度（使用 ideal 避免失敗）
     const stream = await navigator.mediaDevices.getUserMedia({
       video: {
-        facingMode: { ideal: "environment" },  // 優先後置，但不強制
+        facingMode: { ideal: "environment" },
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
+        aspectRatio: { ideal: 16/9 },
       },
       audio: false,
     });
