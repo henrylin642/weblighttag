@@ -618,12 +618,10 @@ function applySupportedConstraints(track, desired) {
 async function startCamera() {
   try {
     setStatus("Requesting camera...");
+    // 使用最簡單的設置，避免約束問題
     const stream = await navigator.mediaDevices.getUserMedia({
       video: {
-        facingMode: "environment",
-        width: { ideal: getConfig().targetWidth },
-        height: { ideal: getConfig().targetHeight },
-        frameRate: { ideal: getConfig().targetFps, max: 60 },
+        facingMode: { ideal: "environment" },  // 優先後置，但不強制
       },
       audio: false,
     });
