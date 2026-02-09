@@ -624,7 +624,6 @@ async function startCamera() {
         width: { ideal: getConfig().targetWidth },
         height: { ideal: getConfig().targetHeight },
         frameRate: { ideal: getConfig().targetFps, max: 60 },
-        focusMode: { ideal: "continuous" },  // 請求連續自動對焦
       },
       audio: false,
     });
