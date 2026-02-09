@@ -1673,10 +1673,11 @@ function updateFps(ts) {
 }
 
 function processFrame(ts) {
-  updateFps(ts);
+  try {
+    updateFps(ts);
 
-  // 5-LED定位處理
-  if (state.autoLocating) {
+    // 5-LED定位處理
+    if (state.autoLocating) {
     const tracked = updateTracking();
     const intervalMs = 300;
     if (!tracked && ts - state.lastAutoDetectTs >= intervalMs) {
@@ -1715,7 +1716,10 @@ function processFrame(ts) {
 
   // Removed 3-LED data decoding logic
 
-  updateProcessedView();
+    updateProcessedView();
+  } catch (err) {
+    console.error('processFrame error:', err);
+  }
   requestNextFrame();
 }
 
