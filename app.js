@@ -514,6 +514,19 @@ const ui = {
   log: document.getElementById("log"),
   btnAutoHsv: document.getElementById("btnAutoHsv"),
   cfgEnvMode: document.getElementById("cfgEnvMode"),
+  // HSV 控制
+  cfgHueMin: document.getElementById("cfgHueMin"),
+  cfgHueMax: document.getElementById("cfgHueMax"),
+  cfgSatMin: document.getElementById("cfgSatMin"),
+  cfgValMin: document.getElementById("cfgValMin"),
+  valHueMin: document.getElementById("valHueMin"),
+  valHueMax: document.getElementById("valHueMax"),
+  valSatMin: document.getElementById("valSatMin"),
+  valValMin: document.getElementById("valValMin"),
+  // 顯示選項
+  chkShowMask: document.getElementById("chkShowMask"),
+  chkMaskOnly: document.getElementById("chkMaskOnly"),
+  chkOnlyEnhance: document.getElementById("chkOnlyEnhance"),
 };
 
 const state = {
@@ -535,6 +548,10 @@ const state = {
   useEnhancedLocalizer: true,  // 使用增強版定位器
   kalmanFilters: {},  // 卡爾曼濾波器
   pnpSolver: null,  // PnP求解器
+  // 顯示選項
+  showMask: false,     // 顯示藍燈遮罩
+  maskOnly: false,     // 只顯示遮罩
+  onlyEnhance: true,   // 只顯示強化畫面
 };
 
 const offscreen = document.createElement("canvas");
@@ -564,7 +581,11 @@ function setStatus(text) {
 
 // Removed - no longer needed for 5-LED positioning
 function updateEnhanceLabels() {
-  // No-op
+  // 更新 HSV 滑桿標籤
+  if (ui.valHueMin) ui.valHueMin.textContent = ui.cfgHueMin.value;
+  if (ui.valHueMax) ui.valHueMax.textContent = ui.cfgHueMax.value;
+  if (ui.valSatMin) ui.valSatMin.textContent = Number(ui.cfgSatMin.value).toFixed(2);
+  if (ui.valValMin) ui.valValMin.textContent = Number(ui.cfgValMin.value).toFixed(2);
 }
 
 // Removed - no longer needed for 5-LED positioning
@@ -655,19 +676,19 @@ function initLocalizer() {
   }
   state.localizer = new LED6DoFLocalizer();
 
-  // 使用默認HSV參數（藍色LED）
-  state.localizer.updateHSVParams({
-    hMin: 192,    // 藍色範圍開始
-    hMax: 260,    // 藍色範圍結束
-    sMin: 0.74,   // 最小飽和度
-    vMin: 0.70    // 最小明度
-  });
+  // 從 UI 讀取 HSV 參數
+  const hMin = Number(ui.cfgHueMin.value);
+  const hMax = Number(ui.cfgHueMax.value);
+  const sMin = Number(ui.cfgSatMin.value);
+  const vMin = Number(ui.cfgValMin.value);
+
+  state.localizer.updateHSVParams({ hMin, hMax, sMin, vMin });
 
   // 更新相機內參
   const { fx, fy, cx, cy } = getCameraMatrix();
   state.localizer.updateCameraParams(fx, fy, cx, cy);
 
-  console.log("6DoF定位器已初始化 (默認HSV: H=192-260, S=0.74, V=0.70)");
+  console.log(`6DoF定位器已初始化 (HSV: H=${hMin}-${hMax}, S=${sMin}, V=${vMin})`);
   logLine("6DoF定位器已初始化");
 }
 
@@ -825,7 +846,105 @@ function mapOverlayToSource(roi) {
 
 // Removed updateProcessedView - no longer needed for 5-LED positioning
 function updateProcessedView() {
-  // No-op: 5-LED positioning doesn't need image enhancement
+  // 如果沒有啟用任何顯示選項，清除畫面
+  if (!state.showMask && !state.onlyEnhance) {
+    processedCtx.clearRect(0, 0, ui.processed.width, ui.processed.height);
+    ui.processed.style.opacity = "0";
+    ui.video.style.opacity = "1";
+    ui.processed.style.mixBlendMode = "normal";
+    return;
+  }
+
+  // 設置顯示模式
+  if (state.onlyEnhance || state.maskOnly) {
+    ui.processed.style.opacity = "1";
+    ui.video.style.opacity = "0";
+    ui.processed.style.mixBlendMode = "normal";
+  } else {
+    ui.processed.style.opacity = "0.65";
+    ui.video.style.opacity = "1";
+    ui.processed.style.mixBlendMode = "screen";
+  }
+
+  // 繪製當前畫面
+  offCtx.drawImage(ui.video, 0, 0, offscreen.width, offscreen.height);
+  const crop = getCoverRect(
+    offscreen.width,
+    offscreen.height,
+    ui.processed.width,
+    ui.processed.height
+  );
+  procCtx.drawImage(
+    offscreen,
+    crop.sx,
+    crop.sy,
+    crop.sw,
+    crop.sh,
+    0,
+    0,
+    procCanvas.width,
+    procCanvas.height
+  );
+
+  const image = procCtx.getImageData(0, 0, procCanvas.width, procCanvas.height);
+  const { data } = image;
+  const length = procCanvas.width * procCanvas.height;
+
+  // 讀取 HSV 參數
+  const hueMin = Number(ui.cfgHueMin.value);
+  const hueMax = Number(ui.cfgHueMax.value);
+  const satMin = Number(ui.cfgSatMin.value);
+  const valMin = Number(ui.cfgValMin.value);
+
+  // 如果啟用藍燈遮罩
+  if (state.showMask || state.maskOnly) {
+    for (let i = 0; i < length; i += 1) {
+      const idx = i * 4;
+      const r = data[idx] / 255;
+      const g = data[idx + 1] / 255;
+      const b = data[idx + 2] / 255;
+
+      // RGB to HSV 轉換
+      const max = Math.max(r, g, b);
+      const min = Math.min(r, g, b);
+      const delta = max - min;
+      let h = 0;
+      if (delta !== 0) {
+        if (max === r) h = ((g - b) / delta) % 6;
+        else if (max === g) h = (b - r) / delta + 2;
+        else h = (r - g) / delta + 4;
+        h *= 60;
+        if (h < 0) h += 360;
+      }
+      const s = max === 0 ? 0 : delta / max;
+      const v = max;
+
+      // 檢查是否在藍色範圍內
+      const inHue = h >= hueMin && h <= hueMax;
+      const isBlueLed = inHue && s >= satMin && v >= valMin;
+
+      if (state.maskOnly) {
+        // 只顯示遮罩：藍色區域顯示白色，其他顯示黑色
+        if (isBlueLed) {
+          data[idx] = 255;     // R
+          data[idx + 1] = 255; // G
+          data[idx + 2] = 255; // B
+        } else {
+          data[idx] = 0;
+          data[idx + 1] = 0;
+          data[idx + 2] = 0;
+        }
+      } else if (state.showMask && !isBlueLed) {
+        // 顯示遮罩：非藍色區域暗化
+        data[idx] = Math.floor(data[idx] * 0.3);
+        data[idx + 1] = Math.floor(data[idx + 1] * 0.3);
+        data[idx + 2] = Math.floor(data[idx + 2] * 0.3);
+      }
+    }
+  }
+
+  // 繪製處理後的圖像
+  processedCtx.putImageData(image, 0, 0);
 }
 
 function toggleAutoLocating() {
@@ -1640,6 +1759,17 @@ ui.btnAutoHsv.addEventListener("click", autoCalibrateHsv);
 });
 
 updateEnhanceLabels();
+
+// 顯示選項事件監聽器
+ui.chkShowMask.addEventListener("change", () => {
+  state.showMask = ui.chkShowMask.checked;
+});
+ui.chkMaskOnly.addEventListener("change", () => {
+  state.maskOnly = ui.chkMaskOnly.checked;
+});
+ui.chkOnlyEnhance.addEventListener("change", () => {
+  state.onlyEnhance = ui.chkOnlyEnhance.checked;
+});
 
 window.addEventListener("beforeunload", () => {
   if (state.stream) state.stream.getTracks().forEach((t) => t.stop());

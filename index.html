@@ -60,8 +60,45 @@
               </select>
             </label>
           </div>
+
+          <!-- 顯示選項 -->
+          <div class="config-grid" style="margin-top: 10px;">
+            <label>
+              <input id="chkShowMask" type="checkbox" />
+              藍燈遮罩
+            </label>
+            <label>
+              <input id="chkMaskOnly" type="checkbox" />
+              只顯示遮罩
+            </label>
+            <label>
+              <input id="chkOnlyEnhance" type="checkbox" checked />
+              只顯示強化畫面
+            </label>
+          </div>
+
+          <!-- HSV 參數調整 -->
+          <div class="config-grid" style="margin-top: 10px;">
+            <label>Hue Min
+              <input id="cfgHueMin" type="range" min="180" max="260" step="1" value="192" />
+              <span id="valHueMin">192</span>
+            </label>
+            <label>Hue Max
+              <input id="cfgHueMax" type="range" min="180" max="260" step="1" value="260" />
+              <span id="valHueMax">260</span>
+            </label>
+            <label>Sat Min
+              <input id="cfgSatMin" type="range" min="0" max="1" step="0.01" value="0.74" />
+              <span id="valSatMin">0.74</span>
+            </label>
+            <label>Val Min
+              <input id="cfgValMin" type="range" min="0" max="1" step="0.01" value="0.70" />
+              <span id="valValMin">0.70</span>
+            </label>
+          </div>
+
           <div class="video-actions">
-            <button id="btnAutoHsv" disabled style="background: #2a7a52; font-weight: bold; display: none;">🎨 自動校準 HSV</button>
+            <button id="btnAutoHsv" disabled style="background: #2a7a52; font-weight: bold;">🎨 自動校準 HSV</button>
           </div>
           <div class="video-actions">
             <button id="btnLocAuto" disabled style="background: #2a6a92; font-size: 16px; font-weight: bold;">🎯 開始自動偵測</button>
