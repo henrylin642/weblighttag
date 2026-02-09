@@ -551,7 +551,7 @@ const state = {
   // 顯示選項
   showMask: false,     // 顯示藍燈遮罩
   maskOnly: false,     // 只顯示遮罩
-  onlyEnhance: true,   // 只顯示強化畫面
+  onlyEnhance: false,  // 只顯示強化畫面（預設關閉，顯示原始視頻）
 };
 
 const offscreen = document.createElement("canvas");
