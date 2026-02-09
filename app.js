@@ -712,16 +712,33 @@ function stopCamera() {
 
 function resizeCanvases() {
   const rect = ui.video.getBoundingClientRect();
-  ui.overlay.width = rect.width;
-  ui.overlay.height = rect.height;
-  ui.processed.width = rect.width;
-  ui.processed.height = rect.height;
-  offscreen.width = ui.video.videoWidth || 1280;
-  offscreen.height = ui.video.videoHeight || 720;
+  const dpr = window.devicePixelRatio || 1;  // 設備像素比
+
+  // Canvas 尺寸要乘以 devicePixelRatio 才能在高 DPI 屏幕上清晰
+  ui.overlay.width = rect.width * dpr;
+  ui.overlay.height = rect.height * dpr;
+  ui.processed.width = rect.width * dpr;
+  ui.processed.height = rect.height * dpr;
+
+  // 使用 CSS 控制顯示尺寸
+  ui.overlay.style.width = rect.width + 'px';
+  ui.overlay.style.height = rect.height + 'px';
+  ui.processed.style.width = rect.width + 'px';
+  ui.processed.style.height = rect.height + 'px';
+
+  // 縮放 context 以匹配 devicePixelRatio
+  overlayCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  processedCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  offscreen.width = ui.video.videoWidth || 1920;
+  offscreen.height = ui.video.videoHeight || 1080;
+
   const scale = 0.25;
   procCanvas.width = Math.max(1, Math.round(offscreen.width * scale));
   procCanvas.height = Math.max(1, Math.round(offscreen.height * scale));
   state.bgModel = null;
+
+  console.log(`Canvas resized: ${rect.width}x${rect.height} @ ${dpr}x DPR, video: ${ui.video.videoWidth}x${ui.video.videoHeight}`);
 }
 
 // Simplified - no longer displays device info
