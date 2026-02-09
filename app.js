@@ -660,9 +660,9 @@ async function startCamera() {
 
     startFrameLoop();
   } catch (err) {
-    console.error(err);
-    setStatus("Camera error");
-    logLine("Camera access failed.");
+    console.error('Camera error:', err);
+    setStatus("Camera error: " + err.message);
+    logLine("Camera access failed: " + err.message);
   }
 }
 
