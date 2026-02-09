@@ -636,7 +636,7 @@ async function startCamera() {
       exposureMode: "manual",
       exposureTime: getConfig().targetExposureUs / 1_000_000,
       iso: getConfig().targetIso,
-      focusMode: "manual",
+      focusMode: "continuous",  // 改用連續自動對焦
     }).catch(() => {
       // Silent: unsupported constraints.
     });
@@ -1773,12 +1773,15 @@ updateEnhanceLabels();
 // 顯示選項事件監聽器
 ui.chkShowMask.addEventListener("change", () => {
   state.showMask = ui.chkShowMask.checked;
+  console.log('showMask:', state.showMask);
 });
 ui.chkMaskOnly.addEventListener("change", () => {
   state.maskOnly = ui.chkMaskOnly.checked;
+  console.log('maskOnly:', state.maskOnly);
 });
 ui.chkOnlyEnhance.addEventListener("change", () => {
   state.onlyEnhance = ui.chkOnlyEnhance.checked;
+  console.log('onlyEnhance:', state.onlyEnhance);
 });
 
 window.addEventListener("beforeunload", () => {
