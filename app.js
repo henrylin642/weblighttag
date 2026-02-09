@@ -620,21 +620,37 @@ function applySupportedConstraints(track, desired) {
 async function startCamera() {
   try {
     setStatus("Requesting camera...");
-    // 使用後置相機
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: "environment" },
-      audio: false,
-    });
+    // 先嘗試高解析度，失敗再用基本設定
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: "environment",
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
+        },
+        audio: false,
+      });
+    } catch (e) {
+      console.log("高解析度失敗，嘗試基本設定:", e.message);
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "environment" },
+        audio: false,
+      });
+    }
 
     state.stream = stream;
     state.track = stream.getVideoTracks()[0];
 
-    // 不設置 focusMode，讓設備使用默認自動對焦
-    await applySupportedConstraints(state.track, {
-      frameRate: getConfig().targetFps,
-    }).catch(() => {
-      // Silent: unsupported constraints.
-    });
+    // 嘗試提升解析度（如果初始請求沒成功）
+    try {
+      await state.track.applyConstraints({
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
+      });
+    } catch (e) {
+      console.log("applyConstraints 失敗:", e.message);
+    }
 
     ui.video.srcObject = stream;
     await ui.video.play();
