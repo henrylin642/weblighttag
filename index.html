@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>Antigravity Optical ID Reader</title>
     <link rel="stylesheet" href="styles.css" />
     <script>
@@ -14,44 +14,78 @@
     </script>
   </head>
   <body>
-    <div class="app">
-      <header class="header">
-        <div>
-          <h1>Antigravity Optical ID Reader</h1>
-          <p>Web-based LED optical ID decoding (96-bit payload → 16-bit core ID)</p>
-          <p style="font-size: 11px; color: #666; margin-top: 4px;">v1.2.9 (Build: 2026-02-09)</p>
+
+    <!-- Full-screen video background -->
+    <div class="video-layer">
+      <div class="video-wrap">
+        <video id="video" playsinline muted></video>
+        <canvas id="processed"></canvas>
+        <canvas id="overlay"></canvas>
+      </div>
+    </div>
+
+    <!-- HUD: top-left title -->
+    <div class="hud-top">
+      <div class="hud-title">Antigravity Optical ID</div>
+      <div class="hud-version">v1.2.9 · 2026-02-09</div>
+    </div>
+
+    <!-- HUD: top-right status -->
+    <div class="status" id="status">Idle</div>
+
+    <!-- HUD: floating action buttons above bottom panel -->
+    <div class="hud-actions">
+      <button id="btnStart">啟動相機</button>
+      <button id="btnStop" disabled>停止</button>
+      <button id="btnLocAuto" disabled style="background:#2a6a92;color:#fff;font-weight:bold;">🎯 自動偵測</button>
+      <button id="btnLocClear" disabled>清除</button>
+    </div>
+
+    <!-- Expand/collapse toggle -->
+    <button class="panel-toggle" id="panelToggle">▲ 展開</button>
+
+    <!-- Bottom panel: tabs with log + controls -->
+    <div class="bottom-panel" id="bottomPanel">
+      <div class="tab-bar" id="tabBar">
+        <button class="active" data-tab="log">日誌</button>
+        <button data-tab="readout">讀數</button>
+        <button data-tab="config">設定</button>
+        <button data-tab="hsv">HSV</button>
+      </div>
+      <div class="tab-content">
+
+        <!-- Tab: Log -->
+        <div class="tab-page active" id="tab-log">
+          <div class="log" id="log" style="height:100%;"></div>
         </div>
-        <div class="status" id="status">Idle</div>
-      </header>
 
-      <main class="main">
-        <section class="panel video-panel">
-          <div class="video-fixed">
-            <div class="video-wrap">
-              <video id="video" playsinline muted></video>
-              <canvas id="processed"></canvas>
-              <canvas id="overlay"></canvas>
-            </div>
+        <!-- Tab: Readout -->
+        <div class="tab-page" id="tab-readout">
+          <div class="output-row">
+            <div><div class="label">PnP 狀態</div><div id="locStatus">-</div></div>
+            <div><div class="label">距離 (m)</div><div id="locDist">-</div></div>
           </div>
-          <div class="video-spacer"></div>
+          <div class="output-row">
+            <div><div class="label">位置 (mm)</div><div id="locPos">-</div></div>
+            <div><div class="label">姿態 (deg)</div><div id="locRot">-</div></div>
+          </div>
+          <div class="output-row">
+            <div><div class="label">解析度</div><div id="camRes">-</div></div>
+            <div><div class="label">FPS</div><div id="camFps">-</div></div>
+            <div><div class="label">DPR</div><div id="camDpr">-</div></div>
+          </div>
+          <div class="output-row">
+            <div><div class="label">藍燈品質</div><div id="ledQuality">-</div></div>
+          </div>
           <div class="video-actions">
-            <button id="btnStart">啟動相機 Start Camera</button>
-            <button id="btnStop" disabled>停止 Stop</button>
+            <button id="btnLedQuality" disabled>估算藍燈品質</button>
+            <button id="btnLocSolve" disabled>手動計算定位</button>
           </div>
+          <div class="log" id="qualityLog"></div>
+        </div>
 
-          <!-- 簡化版：只保留5-LED定位 -->
-        </section>
-
-        <section class="panel" style="background: linear-gradient(135deg, #1a3a52 0%, #2a4a62 100%); border: 2px solid #3a6a82;">
-          <h2>📍 6DoF定位系統 (5-LED藍燈)</h2>
-          <div class="hint" style="background: #2a5a72; padding: 12px; border-radius: 4px;">
-            <strong>🚀 快速使用（智能檢測）：</strong><br>
-            1️⃣ 將5-LED設備對準畫面中心（2-3公尺）<br>
-            2️⃣ 點擊「🎯 開始自動偵測」立即定位<br>
-            3️⃣ 查看位置、距離信息<br>
-            <br>
-            <strong>💡 提示：</strong>使用固定參數+ROI智能檢測，無需手動校準
-          </div>
+        <!-- Tab: Config -->
+        <div class="tab-page" id="tab-config">
           <div class="config-grid">
             <label>環境模式
               <select id="cfgEnvMode" disabled>
@@ -61,25 +95,31 @@
               </select>
             </label>
           </div>
-
-          <!-- 顯示選項 -->
-          <div class="config-grid" style="margin-top: 10px;">
+          <div class="config-grid">
             <label>
-              <input id="chkShowMask" type="checkbox" />
-              藍燈遮罩
+              <input id="chkShowMask" type="checkbox" /> 藍燈遮罩
             </label>
             <label>
-              <input id="chkMaskOnly" type="checkbox" />
-              只顯示遮罩
+              <input id="chkMaskOnly" type="checkbox" /> 只顯示遮罩
             </label>
             <label>
-              <input id="chkOnlyEnhance" type="checkbox" />
-              只顯示強化畫面
+              <input id="chkOnlyEnhance" type="checkbox" /> 只顯示強化畫面
             </label>
           </div>
+          <div class="config-grid">
+            <label>fx <input id="cfgFx" type="number" step="1" /></label>
+            <label>fy <input id="cfgFy" type="number" step="1" /></label>
+            <label>cx <input id="cfgCx" type="number" step="1" /></label>
+            <label>cy <input id="cfgCy" type="number" step="1" /></label>
+          </div>
+          <div class="video-actions">
+            <button id="btnAutoHsv" disabled style="background:#2a7a52;">🎨 自動校準 HSV</button>
+          </div>
+        </div>
 
-          <!-- HSV 參數調整 -->
-          <div class="config-grid" style="margin-top: 10px;">
+        <!-- Tab: HSV -->
+        <div class="tab-page" id="tab-hsv">
+          <div class="config-grid">
             <label>Hue Min
               <input id="cfgHueMin" type="range" min="180" max="260" step="1" value="192" />
               <span id="valHueMin">192</span>
@@ -97,84 +137,48 @@
               <span id="valValMin">0.70</span>
             </label>
           </div>
+        </div>
 
-          <div class="video-actions">
-            <button id="btnAutoHsv" disabled style="background: #2a7a52; font-weight: bold;">🎨 自動校準 HSV</button>
-          </div>
-          <div class="video-actions">
-            <button id="btnLocAuto" disabled style="background: #2a6a92; font-size: 16px; font-weight: bold;">🎯 開始自動偵測</button>
-            <button id="btnLocClear" disabled>清除定位點</button>
-            <button id="btnLocSolve" disabled>手動計算定位</button>
-          </div>
-          <div class="config-grid">
-            <label>fx
-              <input id="cfgFx" type="number" step="1" />
-            </label>
-            <label>fy
-              <input id="cfgFy" type="number" step="1" />
-            </label>
-            <label>cx
-              <input id="cfgCx" type="number" step="1" />
-            </label>
-            <label>cy
-              <input id="cfgCy" type="number" step="1" />
-            </label>
-          </div>
-          <div class="output-row">
-            <div>
-              <div class="label">PnP 狀態</div>
-              <div id="locStatus">-</div>
-            </div>
-            <div>
-              <div class="label">位置 (mm)</div>
-              <div id="locPos">-</div>
-            </div>
-            <div>
-              <div class="label">姿態 (deg)</div>
-              <div id="locRot">-</div>
-            </div>
-            <div>
-              <div class="label">距離 (m)</div>
-              <div id="locDist">-</div>
-            </div>
-          </div>
-          <div class="output-row">
-            <div>
-              <div class="label">視頻解析度</div>
-              <div id="camRes">-</div>
-            </div>
-            <div>
-              <div class="label">實際 FPS</div>
-              <div id="camFps">-</div>
-            </div>
-            <div>
-              <div class="label">DPR</div>
-              <div id="camDpr">-</div>
-            </div>
-          </div>
-          <div class="output-row">
-            <div>
-              <div class="label">藍燈品質</div>
-              <div id="ledQuality">-</div>
-            </div>
-          </div>
-          <div class="video-actions">
-            <button id="btnLedQuality" disabled>估算藍燈品質</button>
-          </div>
-          <div class="log" id="qualityLog"></div>
-        </section>
-
-        <!-- 已刪除：Device Check, Decoder Config, Live Metrics -->
-
-        <section class="panel output">
-          <h2>📊 Console診斷日誌</h2>
-          <div class="log" id="log" style="height: 200px; overflow-y: auto;"></div>
-        </section>
-      </main>
+      </div>
     </div>
 
     <script src="https://docs.opencv.org/4.x/opencv.js"></script>
     <script src="geometry-based-detection.js"></script>
     <script src="app.js"></script>
+
+    <!-- Tab switching + panel toggle logic -->
+    <script>
+    (function() {
+      const tabBar = document.getElementById('tabBar');
+      const toggle = document.getElementById('panelToggle');
+      const panel = document.getElementById('bottomPanel');
+
+      tabBar.addEventListener('click', function(e) {
+        const btn = e.target.closest('[data-tab]');
+        if (!btn) return;
+        // activate tab button
+        tabBar.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        // show tab page
+        document.querySelectorAll('.tab-page').forEach(p => p.classList.remove('active'));
+        const page = document.getElementById('tab-' + btn.dataset.tab);
+        if (page) page.classList.add('active');
+        // auto-expand when switching to non-log tab
+        if (btn.dataset.tab !== 'log' && !panel.classList.contains('expanded')) {
+          panel.classList.add('expanded');
+          toggle.textContent = '▼ 收合';
+        }
+      });
+
+      toggle.addEventListener('click', function() {
+        panel.classList.toggle('expanded');
+        toggle.textContent = panel.classList.contains('expanded') ? '▼ 收合' : '▲ 展開';
+        // recalculate video canvas size after transition
+        setTimeout(function() {
+          if (typeof resizeCanvases === 'function') resizeCanvases();
+        }, 300);
+      });
+    })();
+    </script>
   </body>
 </html>
