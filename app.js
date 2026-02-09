@@ -631,12 +631,9 @@ async function startCamera() {
     state.stream = stream;
     state.track = stream.getVideoTracks()[0];
 
+    // 不設置 focusMode，讓設備使用默認自動對焦
     await applySupportedConstraints(state.track, {
       frameRate: getConfig().targetFps,
-      exposureMode: "manual",
-      exposureTime: getConfig().targetExposureUs / 1_000_000,
-      iso: getConfig().targetIso,
-      focusMode: "continuous",  // 改用連續自動對焦
     }).catch(() => {
       // Silent: unsupported constraints.
     });
@@ -876,7 +873,7 @@ function updateProcessedView() {
   );
 
   // 如果只是顯示強化畫面（無遮罩），直接繪製
-  if (!state.showMask && !state.maskOnly) {
+  if (state.onlyEnhance && !state.showMask && !state.maskOnly) {
     processedCtx.drawImage(
       offscreen,
       crop.sx, crop.sy, crop.sw, crop.sh,
@@ -885,18 +882,22 @@ function updateProcessedView() {
     return;
   }
 
-  // 需要處理遮罩，使用 procCanvas
-  procCanvas.width = ui.processed.width;
-  procCanvas.height = ui.processed.height;
+  // 需要處理遮罩 - 使用降採樣避免卡頓
+  const scale = 0.25;  // 降採樣到 25%
+  const procW = Math.max(1, Math.round(crop.sw * scale));
+  const procH = Math.max(1, Math.round(crop.sh * scale));
+
+  procCanvas.width = procW;
+  procCanvas.height = procH;
   procCtx.drawImage(
     offscreen,
     crop.sx, crop.sy, crop.sw, crop.sh,
-    0, 0, procCanvas.width, procCanvas.height
+    0, 0, procW, procH
   );
 
-  const image = procCtx.getImageData(0, 0, procCanvas.width, procCanvas.height);
+  const image = procCtx.getImageData(0, 0, procW, procH);
   const { data } = image;
-  const length = procCanvas.width * procCanvas.height;
+  const length = procW * procH;
 
   // 讀取 HSV 參數
   const hueMin = Number(ui.cfgHueMin.value);
@@ -949,8 +950,12 @@ function updateProcessedView() {
     }
   }
 
-  // 繪製處理後的圖像
-  processedCtx.putImageData(image, 0, 0);
+  // 寫回處理後的圖像到 procCanvas
+  procCtx.putImageData(image, 0, 0);
+
+  // 放大繪製到 processed canvas
+  processedCtx.imageSmoothingEnabled = true;
+  processedCtx.drawImage(procCanvas, 0, 0, ui.processed.width, ui.processed.height);
 }
 
 function toggleAutoLocating() {
