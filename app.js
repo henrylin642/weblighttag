@@ -81,9 +81,9 @@
     blueFilter.init();
 
     blobDetector = new BlobDetector({
-      minArea: 1,
+      minArea: 4,
       maxArea: 300,
-      maxAspectRatio: 3.0
+      maxAspectRatio: 2.5
     });
 
     geometryMatcher = new GeometryMatcher({
@@ -285,7 +285,8 @@
         filterResult.width,
         filterResult.height,
         filterResult.blueDiffValues,
-        filterResult.downscale
+        filterResult.downscale,
+        filterResult.brightnessValues
       );
 
       // Step 3: Run detection pipeline based on state
