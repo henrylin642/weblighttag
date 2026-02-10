@@ -275,16 +275,41 @@ class FeedbackManager {
 
     // Background strip for status
     ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-    ctx.fillRect(0, 0, w, 36);
+    ctx.fillRect(0, 0, w, 50);
 
     ctx.fillStyle = statusColors[this.state] || '#fff';
-    ctx.fillText(statusMessages[this.state] || '', padding, 24);
+    ctx.fillText(statusMessages[this.state] || '', padding, 20);
 
-    // Candidate count
+    // Resolution (second line, left)
+    if (data.resolution) {
+      ctx.font = '11px monospace';
+      ctx.fillStyle = 'rgba(150, 170, 200, 0.7)';
+      ctx.textAlign = 'left';
+      ctx.fillText(data.resolution, padding, 38);
+    }
+
+    // FPS (second line, after resolution)
+    if (data.fps !== undefined) {
+      ctx.font = '11px monospace';
+      ctx.fillStyle = 'rgba(150, 170, 200, 0.5)';
+      ctx.textAlign = 'left';
+      const resWidth = data.resolution ? ctx.measureText(data.resolution).width + 12 : 0;
+      ctx.fillText(`${data.fps} FPS`, padding + resWidth, 38);
+    }
+
+    // Candidate count (top-right)
     if (data.candidateCount !== undefined) {
+      ctx.font = '14px monospace';
       ctx.fillStyle = 'rgba(200, 200, 200, 0.7)';
       ctx.textAlign = 'right';
-      ctx.fillText(`候選: ${data.candidateCount}`, w - padding, 24);
+      ctx.fillText(`候選: ${data.candidateCount}`, w - padding, 20);
+
+      // Threshold info (second line, right)
+      if (data.threshold !== undefined) {
+        ctx.font = '11px monospace';
+        ctx.fillStyle = 'rgba(150, 170, 200, 0.5)';
+        ctx.fillText(`閾值: ${data.threshold.toFixed(3)}`, w - padding, 38);
+      }
     }
 
     // Distance and pose info (bottom area)
@@ -342,13 +367,6 @@ class FeedbackManager {
       }
     }
 
-    // FPS counter (top-right, small)
-    if (data.fps !== undefined) {
-      ctx.font = '10px monospace';
-      ctx.fillStyle = 'rgba(150, 150, 150, 0.5)';
-      ctx.textAlign = 'right';
-      ctx.fillText(`${data.fps} FPS`, w - padding, 12);
-    }
   }
 
   // --- Audio methods ---
