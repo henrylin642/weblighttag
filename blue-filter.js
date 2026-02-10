@@ -322,16 +322,20 @@ class BlueFilter {
     const eroded = new Uint8Array(size);
     const dilated = new Uint8Array(size);
 
-    // Erosion (4-connectivity): pixel survives only if all 4 neighbors are set
+    // Erosion (majority-vote): pixel survives if at least 3 of 4 neighbors are set
+    // Gentler than strict 4-connectivity to preserve small LED blobs (2-4 px)
     for (let y = 1; y < h - 1; y++) {
       for (let x = 1; x < w - 1; x++) {
         const idx = y * w + x;
-        if (mask[idx] &&
-            mask[idx - 1] &&       // left
-            mask[idx + 1] &&       // right
-            mask[idx - w] &&       // top
-            mask[idx + w]) {       // bottom
-          eroded[idx] = 255;
+        if (mask[idx]) {
+          const neighborCount =
+            (mask[idx - 1] ? 1 : 0) +   // left
+            (mask[idx + 1] ? 1 : 0) +   // right
+            (mask[idx - w] ? 1 : 0) +   // top
+            (mask[idx + w] ? 1 : 0);    // bottom
+          if (neighborCount >= 3) {
+            eroded[idx] = 255;
+          }
         }
       }
     }
@@ -416,12 +420,14 @@ void main() {
   float normalBlue = step(u_threshold, blueDiff) * step(u_brightness, brightness) * hueOk * satOk;
 
   // === PATH 2: Saturated/overexposed LED center detection ===
-  // Very bright (>0.85) AND any blue excess (>0.02) AND blue is max channel
+  // Very bright (>0.85) AND blue is near the max channel (within 0.05)
   // Catches near-white pixels at LED center where camera sensor saturated
+  // Relaxed: allows white-balanced pixels where R or G slightly exceeds B
   float isBright = step(0.85, brightness);
-  float hasBlueExcess = step(0.02, blueDiff);
-  float blueIsMax = step(r, b) * step(g, b);
-  float saturatedLED = isBright * hasBlueExcess * blueIsMax;
+  float maxChannel = max(r, max(g, b));
+  float blueNearMax = step(maxChannel - b, 0.05);
+  float hasMinBlueDiff = step(0.005, blueDiff);
+  float saturatedLED = isBright * blueNearMax * hasMinBlueDiff;
 
   // Combined: either path passes
   float isBlue = clamp(normalBlue + saturatedLED, 0.0, 1.0);

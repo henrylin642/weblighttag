@@ -18,6 +18,7 @@ class FeedbackManager {
     // Candidate info
     this.candidateCenter = null;
     this.candidateCount = 0;
+    this.stripCount = 0;
   }
 
   /**
@@ -53,6 +54,7 @@ class FeedbackManager {
 
     if (data.candidateCenter) this.candidateCenter = data.candidateCenter;
     if (data.candidateCount !== undefined) this.candidateCount = data.candidateCount;
+    if (data.stripCount !== undefined) this.stripCount = data.stripCount;
   }
 
   /**
@@ -156,28 +158,63 @@ class FeedbackManager {
   }
 
   _drawLocked(ctx, w, h, data, age) {
-    if (!data.points || data.points.length < 5) return;
+    if (!data.points || data.points.length < 4) return;
 
     const pts = data.points;
 
-    // Draw connecting lines for rectangle (LED 1-2-3-4)
-    const rectPts = pts.filter(p => p.id <= 4).sort((a, b) => a.id - b.id);
-    if (rectPts.length === 4) {
+    // Separate strip edges and LED points
+    const stripEdges = pts.filter(p => typeof p.id === 'string' && p.id.startsWith('S'));
+    const ledPts = pts.filter(p => typeof p.id === 'string' && p.id.startsWith('LED'));
+
+    // Draw strip edge connections (left-right pairs for each strip)
+    ctx.strokeStyle = 'rgba(255, 200, 50, 0.7)';
+    ctx.lineWidth = 2;
+    const stripPairs = [['ST_L', 'ST_R'], ['SM_L', 'SM_R'], ['SB_L', 'SB_R']];
+    for (const [leftId, rightId] of stripPairs) {
+      const left = stripEdges.find(p => p.id === leftId);
+      const right = stripEdges.find(p => p.id === rightId);
+      if (left && right) {
+        ctx.beginPath();
+        ctx.moveTo(left.x * w, left.y * h);
+        ctx.lineTo(right.x * w, right.y * h);
+        ctx.stroke();
+      }
+    }
+
+    // Draw LED rectangle connections if we have corner LEDs
+    const rectPts = ledPts.filter(p => ['LED1','LED2','LED3','LED4'].includes(p.id));
+    if (rectPts.length >= 2) {
       ctx.strokeStyle = 'rgba(50, 200, 100, 0.7)';
       ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(rectPts[0].x * w, rectPts[0].y * h);
-      for (let i = 1; i < 4; i++) {
-        ctx.lineTo(rectPts[i].x * w, rectPts[i].y * h);
-      }
-      ctx.closePath();
-      ctx.stroke();
 
-      // Draw center to LED5 connection
-      const led5 = pts.find(p => p.id === 5);
-      if (led5) {
-        const centerX = rectPts.reduce((s, p) => s + p.x, 0) / 4;
-        const centerY = rectPts.reduce((s, p) => s + p.y, 0) / 4;
+      // Draw available rectangle edges
+      const cornerMap = {
+        'LED1': [0, 0], 'LED2': [1, 0],
+        'LED3': [1, 1], 'LED4': [0, 1]
+      };
+
+      // Draw edges between consecutive corners
+      const edges = [
+        ['LED1', 'LED2'], ['LED2', 'LED3'],
+        ['LED3', 'LED4'], ['LED4', 'LED1']
+      ];
+
+      for (const [id1, id2] of edges) {
+        const p1 = rectPts.find(p => p.id === id1);
+        const p2 = rectPts.find(p => p.id === id2);
+        if (p1 && p2) {
+          ctx.beginPath();
+          ctx.moveTo(p1.x * w, p1.y * h);
+          ctx.lineTo(p2.x * w, p2.y * h);
+          ctx.stroke();
+        }
+      }
+
+      // Draw center to LED5 connection if LED5 exists
+      const led5 = ledPts.find(p => p.id === 'LED5');
+      if (led5 && rectPts.length >= 2) {
+        const centerX = rectPts.reduce((s, p) => s + p.x, 0) / rectPts.length;
+        const centerY = rectPts.reduce((s, p) => s + p.y, 0) / rectPts.length;
 
         ctx.strokeStyle = 'rgba(50, 200, 100, 0.5)';
         ctx.setLineDash([4, 4]);
@@ -189,13 +226,29 @@ class FeedbackManager {
       }
     }
 
-    // Draw LED markers
-    for (const p of pts) {
+    // Draw strip edge markers (small squares)
+    for (const p of stripEdges) {
+      const px = p.x * w;
+      const py = p.y * h;
+      const size = 4;
+
+      ctx.fillStyle = 'rgba(255, 200, 50, 0.9)'; // Yellow for strip edges
+      ctx.fillRect(px - size, py - size, size * 2, size * 2);
+
+      // Label
+      ctx.fillStyle = '#fff';
+      ctx.font = '9px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(p.id, px, py - size - 2);
+    }
+
+    // Draw LED markers (circles)
+    for (const p of ledPts) {
       const px = p.x * w;
       const py = p.y * h;
       const radius = 6;
 
-      if (p.id === 5) {
+      if (p.id === 'LED5') {
         // LED5: green circle
         ctx.fillStyle = 'rgba(50, 220, 100, 0.9)';
       } else {
@@ -304,7 +357,9 @@ class FeedbackManager {
       ctx.font = '14px monospace';
       ctx.fillStyle = 'rgba(200, 200, 200, 0.7)';
       ctx.textAlign = 'right';
-      ctx.fillText(`候選: ${data.candidateCount}`, w - padding, 20);
+
+      const stripInfo = data.stripCount ? ` | 燈條: ${data.stripCount}` : '';
+      ctx.fillText(`候選: ${data.candidateCount}${stripInfo}`, w - padding, 20);
 
       // Threshold info (second line, right)
       if (data.threshold !== undefined) {
@@ -367,6 +422,18 @@ class FeedbackManager {
         ctx.textAlign = 'right';
         ctx.fillText(`穩定: ${(data.stability * 100).toFixed(0)}%`, w - padding, barY - 3);
       }
+    }
+
+    // Version label (bottom-left, always visible)
+    // Move above bottom bar when pose info is displayed
+    if (data.version) {
+      const hasPoseBar = data.distance !== undefined &&
+        (this.state === 'locked' || this.state === 'tracking');
+      const versionY = hasPoseBar ? h - 85 : h - 4;
+      ctx.font = '10px monospace';
+      ctx.fillStyle = 'rgba(100, 120, 150, 0.5)';
+      ctx.textAlign = 'left';
+      ctx.fillText('v' + data.version, padding, versionY);
     }
 
   }
