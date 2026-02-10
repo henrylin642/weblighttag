@@ -429,23 +429,23 @@ class FeedbackManager {
     const hasPoseBar = data.distance !== undefined &&
       (this.state === 'locked' || this.state === 'tracking');
 
-    // Debug info line (above version label)
+    // Debug info + version (below top HUD bar, always visible)
+    // Positioned at Y=54 and Y=67 — just under the 50px top status bar
+    // This avoids being clipped by mobile browser bottom chrome
     if (data.focusStatus) {
-      const debugY = hasPoseBar ? h - 98 : h - 17;
       ctx.font = '10px monospace';
       ctx.fillStyle = 'rgba(150, 170, 200, 0.6)';
       ctx.textAlign = 'left';
       const maskPct = (data.maskPercent || 0).toFixed(1);
       const peakInfo = `${data.peakCount || 0}/${data.maxCandidates || 20}`;
-      ctx.fillText(`焦:${data.focusStatus} | 罩:${maskPct}% | 峰:${peakInfo}`, padding, debugY);
+      ctx.fillText(`焦:${data.focusStatus} | 罩:${maskPct}% | 峰:${peakInfo}`, padding, 54);
     }
 
     if (data.version) {
-      const versionY = hasPoseBar ? h - 85 : h - 4;
       ctx.font = '10px monospace';
       ctx.fillStyle = 'rgba(100, 120, 150, 0.5)';
       ctx.textAlign = 'left';
-      ctx.fillText('v' + data.version, padding, versionY);
+      ctx.fillText('v' + data.version, padding, 67);
     }
 
   }

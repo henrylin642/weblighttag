@@ -8,7 +8,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '2.3.1';
+  const APP_VERSION = '2.3.2';
 
   // --- State ---
 
