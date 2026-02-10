@@ -17,9 +17,10 @@ class BlobDetector {
    * @param {number} height - Mask height
    * @param {Uint8Array} [blueDiffValues] - Optional blue diff strength per pixel
    * @param {number} [downscale] - Downscale factor used to create the mask
+   * @param {Uint8Array} [brightnessValues] - Optional brightness per pixel (from shader B channel)
    * @returns {Array<Blob>} Detected blobs with centroid, area, bbox, brightness
    */
-  detect(mask, width, height, blueDiffValues, downscale = 1) {
+  detect(mask, width, height, blueDiffValues, downscale = 1, brightnessValues = null) {
     // Connected-component labeling with Union-Find
     const labels = new Int32Array(width * height);
     labels.fill(-1);
@@ -70,7 +71,9 @@ class BlobDetector {
             minX: width, minY: height,
             maxX: 0, maxY: 0,
             sumBrightness: 0,
-            maxBrightness: 0
+            maxBrightness: 0,
+            sumRealBrightness: 0,
+            maxRealBrightness: 0
           };
           stats.set(root, s);
         }
@@ -88,6 +91,11 @@ class BlobDetector {
           s.sumBrightness += bv;
           if (bv > s.maxBrightness) s.maxBrightness = bv;
         }
+        if (brightnessValues) {
+          const rv = brightnessValues[idx];
+          s.sumRealBrightness += rv;
+          if (rv > s.maxRealBrightness) s.maxRealBrightness = rv;
+        }
       }
     }
 
@@ -102,6 +110,20 @@ class BlobDetector {
       const bboxH = s.maxY - s.minY + 1;
       const aspect = Math.max(bboxW, bboxH) / Math.max(1, Math.min(bboxW, bboxH));
       if (aspect > this.maxAspectRatio) continue;
+
+      // Minimum average brightness filter: reject dim noise blobs
+      if (blueDiffValues) {
+        const avgBlueDiff = s.sumBrightness / s.area;
+        // Real LEDs have blueDiff typically 30-200; noise is 1-8
+        // But saturated LED centers may have low blueDiff, so also check real brightness
+        const avgRealBright = brightnessValues ? (s.sumRealBrightness / s.area) : 0;
+        if (avgBlueDiff < 10 && avgRealBright < 200) continue;
+      }
+
+      // Compactness filter: real LEDs should be roughly circular
+      // Compactness = area / (bboxW * bboxH); circle ≈ 0.78, square = 1.0
+      const compactness = s.area / (bboxW * bboxH);
+      if (compactness < 0.3) continue;
 
       // Centroid in normalized coordinates (0-1)
       const cx = s.sumX / s.area;
@@ -118,6 +140,8 @@ class BlobDetector {
         area: s.area,
         brightness: blueDiffValues ? (s.sumBrightness / s.area) : 0,
         maxBrightness: s.maxBrightness,
+        realBrightness: brightnessValues ? (s.sumRealBrightness / s.area) : 0,
+        maxRealBrightness: s.maxRealBrightness,
         bbox: {
           x: s.minX / width,
           y: s.minY / height,
@@ -128,8 +152,13 @@ class BlobDetector {
       });
     }
 
-    // Sort by brightness (strongest blue diff first)
-    blobs.sort((a, b) => b.maxBrightness - a.maxBrightness);
+    // Sort by composite score: real brightness + blue signal
+    // This ensures saturated LEDs (high brightness, low blueDiff) rank high
+    blobs.sort((a, b) => {
+      const scoreA = a.maxRealBrightness * 0.5 + a.maxBrightness * 0.5;
+      const scoreB = b.maxRealBrightness * 0.5 + b.maxBrightness * 0.5;
+      return scoreB - scoreA;
+    });
 
     return blobs;
   }
@@ -165,7 +194,7 @@ class BlobDetector {
       const imgData = fullResCtx.getImageData(x0, y0, w, h);
       const data = imgData.data;
 
-      // Weighted centroid using blue differential as weight
+      // Weighted centroid: use brightness for saturated pixels, blueDiff for normal
       let sumWeight = 0;
       let sumWX = 0;
       let sumWY = 0;
@@ -178,9 +207,19 @@ class BlobDetector {
           const b = data[i + 2];
 
           const blueDiff = b - (r + g) * 0.5;
-          if (blueDiff <= 0) continue;
+          const pixBrightness = (r + g + b) / 3.0;
+          let weight;
 
-          const weight = blueDiff * blueDiff; // Square for sharper peak
+          if (pixBrightness > 200 && blueDiff > 0) {
+            // Saturated LED center: weight by brightness (converges to brightest point)
+            weight = pixBrightness * pixBrightness;
+          } else if (blueDiff > 0) {
+            // Normal blue pixel: weight by blue differential
+            weight = blueDiff * blueDiff;
+          } else {
+            continue;
+          }
+
           sumWeight += weight;
           sumWX += (x0 + px) * weight;
           sumWY += (y0 + py) * weight;

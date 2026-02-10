@@ -87,11 +87,12 @@ class BlueFilter {
     // Unbind framebuffer
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 
-    // Extract binary mask (R channel) and blue diff strength (G channel)
+    // Extract binary mask (R channel), blue diff strength (G channel), brightness (B channel)
     // IMPORTANT: WebGL readPixels returns data bottom-to-top (OpenGL convention)
     // We flip Y here so the mask uses top-left origin (standard image convention)
-    const mask = new Uint8Array(outW * outH);
+    const rawMask = new Uint8Array(outW * outH);
     const blueDiffValues = new Uint8Array(outW * outH);
+    const brightnessValues = new Uint8Array(outW * outH);
 
     for (let y = 0; y < outH; y++) {
       const srcRow = (outH - 1 - y) * outW; // Flip Y
@@ -99,17 +100,21 @@ class BlueFilter {
       for (let x = 0; x < outW; x++) {
         const srcIdx = (srcRow + x) * 4;
         const dstIdx = dstRow + x;
-        mask[dstIdx] = pixels[srcIdx];         // R channel = binary (0 or 255)
-        blueDiffValues[dstIdx] = pixels[srcIdx + 1]; // G channel = blue diff strength
+        rawMask[dstIdx] = pixels[srcIdx];              // R channel = binary (0 or 255)
+        blueDiffValues[dstIdx] = pixels[srcIdx + 1];   // G channel = blue diff strength
+        brightnessValues[dstIdx] = pixels[srcIdx + 2]; // B channel = brightness
       }
     }
+
+    // Apply morphological opening (erosion + dilation) to clean noise
+    const mask = this._morphCleanup(rawMask, outW, outH);
 
     // Adaptive threshold update
     if (this.adaptiveEnabled) {
       this._updateAdaptiveThreshold(blueDiffValues, outW * outH);
     }
 
-    return { mask, blueDiffValues, width: outW, height: outH, downscale };
+    return { mask, blueDiffValues, brightnessValues, width: outW, height: outH, downscale };
   }
 
   /**
@@ -272,29 +277,72 @@ class BlueFilter {
   }
 
   _updateAdaptiveThreshold(blueDiffValues, count) {
-    // Compute the 99.5th percentile of blue diff values to set adaptive threshold
-    // Use a histogram approach for efficiency (values are 0-255)
+    // Compute the 97th percentile of blue diff values to set adaptive threshold
+    // Using 97th instead of 99.5th for more stable estimation (less sensitive to noise clusters)
     const histogram = new Uint32Array(256);
     for (let i = 0; i < count; i++) {
       histogram[blueDiffValues[i]]++;
     }
 
-    const targetCount = Math.floor(count * 0.995);
+    const targetCount = Math.floor(count * 0.97);
     let cumulative = 0;
-    let percentile99_5 = 0;
+    let percentile97 = 0;
     for (let i = 0; i < 256; i++) {
       cumulative += histogram[i];
       if (cumulative >= targetCount) {
-        percentile99_5 = i;
+        percentile97 = i;
         break;
       }
     }
 
-    // Convert to normalized (0-1) and apply as threshold
-    // Use a slightly lower value than the percentile to catch LEDs
-    const adaptiveThresh = (percentile99_5 / 255) * 0.8;
-    // Smoothly blend with current threshold (EMA)
-    this.threshold = this.threshold * 0.9 + Math.max(0.08, Math.min(0.30, adaptiveThresh)) * 0.1;
+    // Convert to normalized (0-1) with 0.6x factor (lower threshold to catch weak blue signals)
+    const adaptiveThresh = (percentile97 / 255) * 0.6;
+    // Smoothly blend with current threshold (EMA), cap at 0.20 to protect saturated LED detection
+    this.threshold = this.threshold * 0.9 + Math.max(0.08, Math.min(0.20, adaptiveThresh)) * 0.1;
+  }
+
+  /**
+   * Apply morphological opening (erosion + dilation) to remove single-pixel noise
+   * and reconnect nearby mask regions.
+   * @param {Uint8Array} mask - Binary mask (0 or 255)
+   * @param {number} w - Width
+   * @param {number} h - Height
+   * @returns {Uint8Array} Cleaned mask
+   */
+  _morphCleanup(mask, w, h) {
+    const size = w * h;
+    const eroded = new Uint8Array(size);
+    const dilated = new Uint8Array(size);
+
+    // Erosion (4-connectivity): pixel survives only if all 4 neighbors are set
+    for (let y = 1; y < h - 1; y++) {
+      for (let x = 1; x < w - 1; x++) {
+        const idx = y * w + x;
+        if (mask[idx] &&
+            mask[idx - 1] &&       // left
+            mask[idx + 1] &&       // right
+            mask[idx - w] &&       // top
+            mask[idx + w]) {       // bottom
+          eroded[idx] = 255;
+        }
+      }
+    }
+
+    // Dilation (8-connectivity): pixel is set if any 8-neighbor is set in eroded mask
+    for (let y = 1; y < h - 1; y++) {
+      for (let x = 1; x < w - 1; x++) {
+        const idx = y * w + x;
+        if (eroded[idx] ||
+            eroded[idx - 1] || eroded[idx + 1] ||
+            eroded[idx - w] || eroded[idx + w] ||
+            eroded[idx - w - 1] || eroded[idx - w + 1] ||
+            eroded[idx + w - 1] || eroded[idx + w + 1]) {
+          dilated[idx] = 255;
+        }
+      }
+    }
+
+    return dilated;
   }
 }
 
@@ -355,8 +403,20 @@ void main() {
   // Saturation gate: must be sufficiently saturated (not white/gray)
   float satOk = step(u_satMin, sat);
 
-  // Combined filter: blue diff AND bright AND hue in range AND saturated
-  float isBlue = step(u_threshold, blueDiff) * step(u_brightness, brightness) * hueOk * satOk;
+  // === PATH 1: Normal blue detection ===
+  // Blue diff > threshold AND bright AND hue in range AND saturated
+  float normalBlue = step(u_threshold, blueDiff) * step(u_brightness, brightness) * hueOk * satOk;
+
+  // === PATH 2: Saturated/overexposed LED center detection ===
+  // Very bright (>0.85) AND any blue excess (>0.02) AND blue is max channel
+  // Catches near-white pixels at LED center where camera sensor saturated
+  float isBright = step(0.85, brightness);
+  float hasBlueExcess = step(0.02, blueDiff);
+  float blueIsMax = step(r, b) * step(g, b);
+  float saturatedLED = isBright * hasBlueExcess * blueIsMax;
+
+  // Combined: either path passes
+  float isBlue = clamp(normalBlue + saturatedLED, 0.0, 1.0);
 
   // R = binary mask (0 or 1 -> 0 or 255)
   // G = blue diff strength (clamped to 0-1)
