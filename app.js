@@ -94,16 +94,15 @@
       maxAspectRatio: 2.5
     });
 
-    geometryMatcher = new GeometryMatcher({
-      sensitivity: state.sensitivity
-    });
+    geometryMatcher = new GeometryMatcher();
 
     pnpSolver = new PnPSolver();
 
     tracker = new LEDTracker({
       processNoise: 0.005,
       measurementNoise: 0.5,
-      maxLostFrames: 3
+      maxLostFrames: 3,
+      minTrackingFeatures: 4
     });
 
     feedback = new FeedbackManager();
@@ -311,16 +310,31 @@
         filterResult.brightnessValues
       );
 
-      // Step 2c: 合併兩種策略的候選
+      // Step 2c: 燈條偵測 (NEW)
+      const stripBlobs = blobDetector.detectStrips(
+        filterResult.mask,
+        filterResult.width,
+        filterResult.height,
+        filterResult.blueDiffValues,
+        filterResult.downscale,
+        filterResult.brightnessValues
+      );
+
+      // Extract strip edge midpoints
+      for (const strip of stripBlobs) {
+        blobDetector.extractStripEdges(strip, filterResult.mask, filterResult.width, filterResult.height, filterResult.brightnessValues);
+      }
+
+      // Step 2d: 合併兩種策略的候選
       const candidates = mergeCandidates(peaks, blobs);
 
       // Step 3: Run detection pipeline based on state
-      processDetection(candidates, filterResult);
+      processDetection(candidates, stripBlobs, filterResult);
 
       // Debug logging (every 2 seconds)
       if (state.frameCount === 1) {
         const maskSum = filterResult.mask.reduce((s, v) => s + (v > 0 ? 1 : 0), 0);
-        console.log(`[debug] filter: ${filterResult.width}x${filterResult.height}, mask白點: ${maskSum}, peaks: ${peaks.length}, blobs: ${blobs.length}, 候選: ${candidates.length}, 閾值: ${blueFilter.threshold.toFixed(3)}`);
+        console.log(`[debug] filter: ${filterResult.width}x${filterResult.height}, mask白點: ${maskSum}, peaks: ${peaks.length}, blobs: ${blobs.length}, strips: ${stripBlobs.length}, 候選: ${candidates.length}, 閾值: ${blueFilter.threshold.toFixed(3)}`);
         // 峰值診斷資訊
         if (peaks.length > 0) {
           const topPeak = peaks[0];
@@ -352,7 +366,7 @@
 
   /**
    * 合併峰值檢測和 blob 檢測的候選。
-   * 以峰值為主，補充距離所有峰值 > 2% 的 blob。
+   * 以峰值為主,補充距離所有峰值 > 2% 的 blob。
    */
   function mergeCandidates(peaks, blobs) {
     // 以峰值為主
@@ -375,8 +389,8 @@
       }
     }
 
-    // 按複合分數排序，取 top 20
-    // 注意：峰值候選用 realBrightness/brightness，blob 候選用 maxRealBrightness/maxBrightness
+    // 按複合分數排序,取 top 20
+    // 注意：峰值候選用 realBrightness/brightness,blob 候選用 maxRealBrightness/maxBrightness
     merged.sort((a, b) => {
       const realBrightA = a.maxRealBrightness || a.realBrightness || 0;
       const blueDiffA = a.maxBrightness || a.brightness || 0;
@@ -391,27 +405,23 @@
     return merged.slice(0, 20);
   }
 
-  function processDetection(blobs, filterResult) {
-    const candidateCount = blobs.length;
-    state.lastCandidateCount = candidateCount;
-
+  function processDetection(blobs, stripBlobs, filterResult) {
+    // Tracking mode: try to match detected blobs to tracked positions
     if (state.detectionState === 'tracking' && tracker.isTracking) {
-      // In tracking mode: try to match detected blobs to tracked positions
       const predictions = tracker.getPredictions();
-      const matched = matchBlobsToPredictions(blobs, predictions);
+      const matched = matchBlobsToPredictions(blobs, stripBlobs, predictions);
 
-      if (matched.length === 5) {
-        // Sub-pixel refinement
-        const refined = refinePositions(matched);
-        const trackResult = tracker.update(refined);
+      if (matched.length >= 4) {
+        const trackResult = tracker.update(matched);
 
         if (trackResult.isTracking) {
-          solvePose(trackResult.tracked, trackResult.stability);
+          // Re-match to get full 2D-3D correspondences
+          solvePoseFromTracked(trackResult.tracked);
           return;
         }
       }
 
-      // Tracking failed - fall back to full detection
+      // Tracking failed - fall back
       const lostResult = tracker.update([]);
       if (!lostResult.isTracking) {
         state.detectionState = 'scanning';
@@ -421,77 +431,129 @@
     }
 
     // Full detection mode
-    if (candidateCount < 5) {
+    const ledCount = blobs.length;
+    const stripCount = stripBlobs ? stripBlobs.length : 0;
+    const extractedEdges = stripBlobs ? stripBlobs.reduce((count, s) =>
+      count + (s.edgeLeft ? 1 : 0) + (s.edgeRight ? 1 : 0), 0
+    ) : 0;
+    const totalFeatures = ledCount + extractedEdges; // actual extracted edge points
+    state.lastCandidateCount = ledCount;
+    state.lastStripCount = stripCount;
+
+    if (totalFeatures < 4) {
       state.detectionState = 'scanning';
-      feedback.setState('scanning', { candidateCount });
+      feedback.setState('scanning', { candidateCount: ledCount, stripCount });
       return;
     }
 
-    // Quick check for promising clusters
-    const quick = geometryMatcher.quickCheck(blobs);
+    // Quick check for promising detection
+    const quick = geometryMatcher.quickCheck(blobs, stripBlobs);
     if (quick.promising) {
       feedback.setState('candidate', {
-        candidateCenter: quick.clusterCenter,
-        candidateCount
+        candidateCount: ledCount,
+        stripCount,
+        info: quick.info
       });
     }
 
-    // Full geometry matching
+    // Full geometry matching (NEW: pass both LED candidates and strip blobs)
     const imageAspect = video.videoWidth / video.videoHeight;
-    const match = geometryMatcher.match(blobs, imageAspect);
+    const match = geometryMatcher.match(blobs, stripBlobs, imageAspect);
 
     if (match && match.success) {
-      // Sub-pixel refinement
-      const refined = refinePositions(match.points);
+      // Build tracked points with feature IDs for the tracker
+      const detectedPoints = [];
+      for (let i = 0; i < match.featureIds.length; i++) {
+        detectedPoints.push({
+          id: match.featureIds[i],
+          x: match.points2D[i].x,
+          y: match.points2D[i].y
+        });
+      }
 
       // Initialize tracker with matched points
       tracker.reset();
-      const trackResult = tracker.update(refined);
+      const trackResult = tracker.update(detectedPoints);
 
       state.detectionState = 'locked';
-      feedback.setState('locked', { candidateCount });
+      feedback.setState('locked', { candidateCount: ledCount, stripCount });
 
-      // Solve pose
-      solvePose(trackResult.tracked, trackResult.stability);
+      // Solve pose using the 2D-3D correspondences directly from the matcher
+      solvePoseFromMatch(match, trackResult.stability);
 
       // Transition to tracking mode
       state.detectionState = 'tracking';
-      feedback.setState('tracking', { candidateCount });
+      feedback.setState('tracking', { candidateCount: ledCount, stripCount });
     } else {
       if (quick.promising) {
         state.detectionState = 'candidate';
       } else {
         state.detectionState = 'scanning';
-        feedback.setState('scanning', { candidateCount });
+        feedback.setState('scanning', { candidateCount: ledCount, stripCount });
       }
     }
   }
 
-  function matchBlobsToPredictions(blobs, predictions) {
-    // For each predicted LED position, find the closest blob
+  function matchBlobsToPredictions(blobs, stripBlobs, predictions) {
     const matched = [];
-    const used = new Set();
+    const usedBlobs = new Set();
+    const usedStrips = new Set();
 
     for (const pred of predictions) {
-      let bestDist = Infinity;
-      let bestIdx = -1;
+      const isStripEdge = pred.id.startsWith('S') && pred.id.includes('_');
 
-      for (let i = 0; i < blobs.length; i++) {
-        if (used.has(i)) continue;
-        const dx = blobs[i].x - pred.x;
-        const dy = blobs[i].y - pred.y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
+      if (isStripEdge) {
+        // Match against strip blobs (using strip center + edge positions)
+        // Strip edges are harder to track individually; use strip centers with larger window
+        let bestDist = Infinity;
+        let bestIdx = -1;
 
-        // Search window: within 5% of image dimension
-        if (dist < 0.05 && dist < bestDist) {
-          bestDist = dist;
-          bestIdx = i;
+        for (let i = 0; i < (stripBlobs || []).length; i++) {
+          if (usedStrips.has(i)) continue;
+          const strip = stripBlobs[i];
+          // Check against the appropriate edge
+          const isLeft = pred.id.endsWith('_L');
+          const edgePt = isLeft ? strip.edgeLeft : strip.edgeRight;
+          if (!edgePt) continue;
+
+          const dx = edgePt.nx - pred.x;
+          const dy = edgePt.ny - pred.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+
+          if (dist < 0.08 && dist < bestDist) { // Larger window for strips
+            bestDist = dist;
+            bestIdx = i;
+          }
         }
-      }
 
-      if (bestIdx >= 0) {
-        used.add(bestIdx);
-        matched.push({ ...blobs[bestIdx], id: pred.id });
+        if (bestIdx >= 0) {
+          const strip = stripBlobs[bestIdx];
+          const isLeft = pred.id.endsWith('_L');
+          const edgePt = isLeft ? strip.edgeLeft : strip.edgeRight;
+          // Don't mark strip as used — same strip has left AND right edges
+          matched.push({ id: pred.id, x: edgePt.nx, y: edgePt.ny });
+        }
+      } else {
+        // Match against LED blobs (original logic)
+        let bestDist = Infinity;
+        let bestIdx = -1;
+
+        for (let i = 0; i < blobs.length; i++) {
+          if (usedBlobs.has(i)) continue;
+          const dx = blobs[i].x - pred.x;
+          const dy = blobs[i].y - pred.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+
+          if (dist < 0.05 && dist < bestDist) {
+            bestDist = dist;
+            bestIdx = i;
+          }
+        }
+
+        if (bestIdx >= 0) {
+          usedBlobs.add(bestIdx);
+          matched.push({ id: pred.id, x: blobs[bestIdx].x, y: blobs[bestIdx].y });
+        }
       }
     }
 
@@ -504,13 +566,36 @@
     // Draw current video frame to offscreen canvas
     state.offCtx.drawImage(video, 0, 0, state.offscreen.width, state.offscreen.height);
 
-    return blobDetector.refinePositions(
-      points,
-      state.offCtx,
-      state.offscreen.width,
-      state.offscreen.height,
-      16
-    );
+    // Only refine LED points (not strip edges)
+    const refined = [];
+    const ledPoints = [];
+
+    for (const p of points) {
+      // Check if this is a LED point (not a strip edge)
+      const isStripEdge = p.id && p.id.startsWith('S') && p.id.includes('_');
+
+      if (isStripEdge) {
+        // Skip refinement for strip edges
+        refined.push(p);
+      } else {
+        // Collect LED points for batch refinement
+        ledPoints.push(p);
+      }
+    }
+
+    // Refine LED points if any
+    if (ledPoints.length > 0) {
+      const refinedLEDs = blobDetector.refinePositions(
+        ledPoints,
+        state.offCtx,
+        state.offscreen.width,
+        state.offscreen.height,
+        16
+      );
+      refined.push(...refinedLEDs);
+    }
+
+    return refined;
   }
 
   // --- Pose Computation ---
@@ -518,28 +603,14 @@
   let lastPose = null;
   let poseStability = 0;
 
-  function solvePose(trackedPoints, stability) {
-    if (trackedPoints.length < 5) return;
-
-    // Convert normalized coordinates to pixel coordinates
+  function solvePoseFromMatch(match, stability) {
     const vw = video.videoWidth;
     const vh = video.videoHeight;
 
-    const objectPoints = [];
-    const imagePoints = [];
+    const objectPoints = match.points3D; // already {x, y, z} in mm
+    const imagePoints = match.points2D.map(p => normalizedToPixel(p.x, p.y, vw, vh));
 
-    for (const p of trackedPoints) {
-      const led = LED_GEOMETRY.points3D.find(l => l.id === p.id);
-      if (!led) continue;
-      objectPoints.push({ x: led.x, y: led.y, z: led.z });
-
-      // Convert from normalized (0-1) to pixel coordinates
-      // Need to account for object-fit: cover cropping
-      const pixelCoords = normalizedToPixel(p.x, p.y, vw, vh);
-      imagePoints.push(pixelCoords);
-    }
-
-    if (objectPoints.length < 5) return;
+    if (objectPoints.length < 4) return;
 
     const result = pnpSolver.solve(objectPoints, imagePoints);
 
@@ -547,11 +618,60 @@
       lastPose = result;
       poseStability = poseStability * 0.8 + stability * 0.2;
 
-      // 自適應峰值檢測器：根據距離調整 NMS 半徑
+      // Adaptive peak detector feedback
       if (peakDetector && result.distance > 0) {
         const distanceMM = result.distance * 1000;
-        const ledDiameterMM = 5;
-        // 計算 LED 在降採樣圖中的預期像素直徑（使用實際 downscale 值）
+        const ledDiameterMM = 6; // Updated from 5mm to 6mm per dimension diagram
+        const ds = state.lastDownscale || 4;
+        const expectedPixels = (ledDiameterMM / distanceMM) * pnpSolver.fx / ds;
+        peakDetector.setExpectedLEDSize(expectedPixels);
+      }
+    }
+  }
+
+  function solvePoseFromTracked(trackedPoints) {
+    const vw = video.videoWidth;
+    const vh = video.videoHeight;
+
+    const objectPoints = [];
+    const imagePoints = [];
+
+    for (const p of trackedPoints) {
+      // Look up 3D position from DEVICE_GEOMETRY
+      let point3D = null;
+
+      // Check if it's a LED
+      const led = DEVICE_GEOMETRY.leds.find(l => l.id === p.id);
+      if (led) {
+        point3D = { x: led.x, y: led.y, z: led.z };
+      }
+
+      // Check if it's a strip edge
+      if (!point3D) {
+        const edge = DEVICE_GEOMETRY.stripEdges.find(e => e.id === p.id);
+        if (edge) {
+          point3D = { x: edge.x, y: edge.y, z: edge.z };
+        }
+      }
+
+      if (!point3D) continue;
+
+      objectPoints.push(point3D);
+      imagePoints.push(normalizedToPixel(p.x, p.y, vw, vh));
+    }
+
+    if (objectPoints.length < 4) return;
+
+    const result = pnpSolver.solve(objectPoints, imagePoints);
+
+    if (result.success && result.reprojError < 30) {
+      lastPose = result;
+      // Keep the existing poseStability smoothing
+
+      // Adaptive peak detector feedback
+      if (peakDetector && result.distance > 0) {
+        const distanceMM = result.distance * 1000;
+        const ledDiameterMM = 6;
         const ds = state.lastDownscale || 4;
         const expectedPixels = (ledDiameterMM / distanceMM) * pnpSolver.fx / ds;
         peakDetector.setExpectedLEDSize(expectedPixels);
@@ -598,6 +718,7 @@
     const data = {
       fps: state.fps,
       candidateCount: state.lastCandidateCount || 0,
+      stripCount: state.lastStripCount || 0,
       resolution: state.resolution || null,
       threshold: blueFilter ? blueFilter.threshold : 0
     };
@@ -772,7 +893,10 @@
         document.querySelectorAll('[data-sensitivity]').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         state.sensitivity = btn.dataset.sensitivity;
-        geometryMatcher.setSensitivity(state.sensitivity);
+
+        // Map old sensitivity names to new
+        const sensitivityMap = { low: 'strict', medium: 'normal', high: 'relaxed' };
+        geometryMatcher.setSensitivity(sensitivityMap[state.sensitivity] || 'normal');
       });
     });
 
