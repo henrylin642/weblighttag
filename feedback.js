@@ -424,6 +424,18 @@ class FeedbackManager {
       }
     }
 
+    // Version label (bottom-left, always visible)
+    // Move above bottom bar when pose info is displayed
+    if (data.version) {
+      const hasPoseBar = data.distance !== undefined &&
+        (this.state === 'locked' || this.state === 'tracking');
+      const versionY = hasPoseBar ? h - 85 : h - 4;
+      ctx.font = '10px monospace';
+      ctx.fillStyle = 'rgba(100, 120, 150, 0.5)';
+      ctx.textAlign = 'left';
+      ctx.fillText('v' + data.version, padding, versionY);
+    }
+
   }
 
   // --- Audio methods ---

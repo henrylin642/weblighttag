@@ -8,6 +8,8 @@
 (function () {
   'use strict';
 
+  const APP_VERSION = '2.1.0';
+
   // --- State ---
 
   const state = {
@@ -89,7 +91,7 @@
     });
 
     blobDetector = new BlobDetector({
-      minArea: 4,
+      minArea: 2,
       maxArea: 300,
       maxAspectRatio: 2.5
     });
@@ -164,6 +166,26 @@
           console.log(`Camera upgraded: ${vw}x${vh} (max: ${maxW}x${maxH})`);
         } catch (e) {
           console.warn('applyConstraints failed:', e);
+        }
+
+        // Apply advanced camera settings for focus and exposure
+        try {
+          const advancedConstraints = {};
+          if (caps.focusMode) {
+            advancedConstraints.focusMode = 'continuous';
+          }
+          if (caps.exposureMode) {
+            advancedConstraints.exposureMode = 'continuous';
+          }
+          if (caps.whiteBalanceMode) {
+            advancedConstraints.whiteBalanceMode = 'continuous';
+          }
+          if (Object.keys(advancedConstraints).length > 0) {
+            await track.applyConstraints({ advanced: [advancedConstraints] });
+            console.log('Camera advanced constraints applied:', advancedConstraints);
+          }
+        } catch (e) {
+          console.warn('Advanced camera constraints not supported:', e.message);
         }
       }
 
@@ -280,7 +302,7 @@
     // Step 1: Run WebGL blue filter
     let filterResult = null;
     try {
-      filterResult = blueFilter.process(video, 4);
+      filterResult = blueFilter.process(video, 3);
     } catch (e) {
       if (state.frameCount === 1) console.error('BlueFilter error:', e);
     }
@@ -720,7 +742,8 @@
       candidateCount: state.lastCandidateCount || 0,
       stripCount: state.lastStripCount || 0,
       resolution: state.resolution || null,
-      threshold: blueFilter ? blueFilter.threshold : 0
+      threshold: blueFilter ? blueFilter.threshold : 0,
+      version: APP_VERSION
     };
 
     if (lastPose && (state.detectionState === 'locked' || state.detectionState === 'tracking')) {
@@ -799,6 +822,7 @@
     const rect = getMaskDisplayRect(width, height);
     overlayCtx.save();
     overlayCtx.globalAlpha = 0.6;
+    overlayCtx.imageSmoothingEnabled = false;
     overlayCtx.drawImage(tmpCanvas, rect.drawX, rect.drawY, rect.drawW, rect.drawH);
     overlayCtx.restore();
   }
@@ -837,9 +861,11 @@
 
     tmpCtx.putImageData(imgData, 0, 0);
 
-    // Draw with object-fit:cover alignment
+    // Draw with object-fit:cover alignment (crisp pixels for debug mask)
     const rect = getMaskDisplayRect(width, height);
+    overlayCtx.imageSmoothingEnabled = false;
     overlayCtx.drawImage(tmpCanvas, rect.drawX, rect.drawY, rect.drawW, rect.drawH);
+    overlayCtx.imageSmoothingEnabled = true;
 
     // Still draw HUD info on top
     feedback.draw(overlayCtx, displayW, displayH, getDrawData(), true);
@@ -985,7 +1011,11 @@
   function init() {
     initModules();
     setupEventListeners();
-    console.log('WebTag 6DoF Locator v2.0 initialized (no OpenCV)');
+    // Set version on start screen
+    const versionHint = document.getElementById('version-hint');
+    if (versionHint) versionHint.textContent = `v${APP_VERSION} - 無需 OpenCV`;
+
+    console.log(`WebTag 6DoF Locator v${APP_VERSION} initialized (no OpenCV)`);
   }
 
   // Run on load

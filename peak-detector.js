@@ -157,14 +157,18 @@ class PeakDetector {
       // 稀疏模式：僅遍歷已知的藍色像素
       for (let k = 0; k < bluePixels.length; k++) {
         const i = bluePixels[k];
-        output[i] = brightness[i] * bw + blueDiff[i] * dw;
+        const baseScore = brightness[i] * bw + blueDiff[i] * dw;
+        // Saturated LED floor: very bright pixels score at least 80% of brightness
+        // Prevents glow rings from outscoring bright LED centers with low blueDiff
+        output[i] = brightness[i] > 200 ? Math.max(baseScore, brightness[i] * 0.8) : baseScore;
       }
     } else {
       // 完整遍歷（回退）
       const size = width * height;
       for (let i = 0; i < size; i++) {
         if (mask[i] > 0 || brightness[i] > 200) {
-          output[i] = brightness[i] * bw + blueDiff[i] * dw;
+          const baseScore = brightness[i] * bw + blueDiff[i] * dw;
+          output[i] = brightness[i] > 200 ? Math.max(baseScore, brightness[i] * 0.8) : baseScore;
         }
       }
     }
