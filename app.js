@@ -8,7 +8,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '2.3.0';
+  const APP_VERSION = '2.3.1';
 
   // --- State ---
 
@@ -54,6 +54,7 @@
   const btnSettings = $('btn-settings');
   const btnStop = $('btn-stop');
   const btnReset = $('btn-reset');
+  const btnResetParams = $('btn-reset-params');
   const settingsDrawer = $('settings-drawer');
   const drawerHandle = $('drawer-handle');
 
@@ -314,6 +315,7 @@
     if (filterResult) {
       // 記錄 downscale 值供自適應 NMS 使用
       state.lastDownscale = filterResult.downscale;
+      state.lastMaskPercent = filterResult.bluePixels.length / (filterResult.width * filterResult.height) * 100;
 
       // Step 2a: 峰值檢測（主要策略 — 能從連通藍色區域中提取 LED 局部峰值）
       const peaks = peakDetector.detect(
@@ -753,7 +755,7 @@
       version: APP_VERSION,
       // Debug info for mobile HUD
       focusStatus: state.focusStatus || 'unknown',
-      maskPercent: filterResult ? (filterResult.bluePixels.length / (filterResult.width * filterResult.height) * 100) : 0,
+      maskPercent: state.lastMaskPercent || 0,
       peakCount: state.lastPeakCount || 0,
       maxCandidates: 20
     };
@@ -841,7 +843,7 @@
 
   function drawMaskFullscreen(filterResult) {
     if (!filterResult) return;
-    const { mask, blueDiffValues, width, height } = filterResult;
+    const { mask, blueDiffValues, width, height, bluePixels } = filterResult;
     const displayW = window.innerWidth;
     const displayH = window.innerHeight;
 
@@ -879,6 +881,19 @@
     overlayCtx.drawImage(tmpCanvas, rect.drawX, rect.drawY, rect.drawW, rect.drawH);
     overlayCtx.imageSmoothingEnabled = true;
 
+    // Empty mask warning
+    if (!bluePixels || bluePixels.length < 5) {
+      overlayCtx.save();
+      overlayCtx.font = 'bold 16px -apple-system, sans-serif';
+      overlayCtx.textAlign = 'center';
+      overlayCtx.fillStyle = 'rgba(255, 200, 50, 0.9)';
+      overlayCtx.fillText('\u26a0 遮罩為空 — 請降低飽和度門檻', displayW / 2, displayH / 2);
+      overlayCtx.font = '13px -apple-system, sans-serif';
+      overlayCtx.fillStyle = 'rgba(200, 200, 200, 0.7)';
+      overlayCtx.fillText('目前無藍色像素通過篩選', displayW / 2, displayH / 2 + 24);
+      overlayCtx.restore();
+    }
+
     // Still draw HUD info on top
     feedback.draw(overlayCtx, displayW, displayH, getDrawData(), true);
   }
@@ -914,6 +929,26 @@
       poseStability = 0;
       state.detectionState = 'scanning';
       feedback.setState('scanning');
+    });
+
+    // Reset detection parameters to defaults
+    btnResetParams.addEventListener('click', () => {
+      cfgSat.value = 0.25;    valSat.textContent = '0.25';
+      cfgHue.value = 227;     valHue.textContent = '227°';
+      cfgHueRange.value = 30; valHueRange.textContent = '±30°';
+      cfgThreshold.value = 0.12;   valThreshold.textContent = '0.12';
+      cfgBrightness.value = 0.15;  valBrightness.textContent = '0.15';
+      cfgAdaptive.checked = true;
+
+      if (blueFilter) {
+        blueFilter.setSatMin(0.25);
+        blueFilter.setHueCenter(227 / 360);
+        blueFilter.setHueRange(30 / 360);
+        blueFilter.setThreshold(0.12);
+        blueFilter.setBrightnessFloor(0.15);
+        blueFilter.adaptiveEnabled = true;
+      }
+      state.adaptiveThreshold = true;
     });
 
     // Settings drawer toggle
