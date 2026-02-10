@@ -126,9 +126,34 @@
         video.addEventListener('loadedmetadata', resolve, { once: true });
       });
 
-      const vw = video.videoWidth;
-      const vh = video.videoHeight;
-      console.log(`Camera started: ${vw}x${vh}`);
+      let vw = video.videoWidth;
+      let vh = video.videoHeight;
+      console.log(`Camera initial: ${vw}x${vh}`);
+
+      // Try to upgrade resolution via applyConstraints
+      const track = state.stream.getVideoTracks()[0];
+      if (track) {
+        try {
+          const caps = track.getCapabilities ? track.getCapabilities() : {};
+          const maxW = caps.width ? caps.width.max : 1920;
+          const maxH = caps.height ? caps.height.max : 1080;
+          const targetW = Math.min(maxW, 1920);
+          const targetH = Math.min(maxH, 1080);
+          await track.applyConstraints({
+            width: { ideal: targetW },
+            height: { ideal: targetH }
+          });
+          // Wait for resolution to update
+          await new Promise(r => setTimeout(r, 300));
+          vw = video.videoWidth;
+          vh = video.videoHeight;
+          console.log(`Camera upgraded: ${vw}x${vh} (max: ${maxW}x${maxH})`);
+        } catch (e) {
+          console.warn('applyConstraints failed:', e);
+        }
+      }
+
+      state.resolution = `${vw}x${vh}`;
 
       // Setup offscreen canvas for full-res pixel access
       state.offscreen = document.createElement('canvas');
@@ -239,7 +264,12 @@
     }
 
     // Step 1: Run WebGL blue filter
-    const filterResult = blueFilter.process(video, 4);
+    let filterResult = null;
+    try {
+      filterResult = blueFilter.process(video, 4);
+    } catch (e) {
+      if (state.frameCount === 1) console.error('BlueFilter error:', e);
+    }
 
     if (filterResult) {
       // Step 2: Detect blobs
@@ -254,22 +284,31 @@
       // Step 3: Run detection pipeline based on state
       processDetection(blobs, filterResult);
 
-      // Step 4: Show mask overlay if enabled
-      if (state.showMask) {
-        drawMaskOverlay(filterResult);
+      // Debug logging (every 2 seconds)
+      if (state.frameCount === 1) {
+        const maskSum = filterResult.mask.reduce((s, v) => s + (v > 0 ? 1 : 0), 0);
+        console.log(`[debug] filter: ${filterResult.width}x${filterResult.height}, mask白點: ${maskSum}, blobs: ${blobs.length}, 閾值: ${blueFilter.threshold.toFixed(3)}`);
       }
+    } else if (state.frameCount === 1) {
+      console.warn('[debug] blueFilter.process returned null, video.readyState:', video.readyState);
     }
 
-    // Step 5: Draw visual feedback
+    // Step 4: Draw visual feedback (clears canvas first)
     const displayW = window.innerWidth;
     const displayH = window.innerHeight;
     feedback.draw(overlayCtx, displayW, displayH, getDrawData());
+
+    // Step 5: Draw mask overlay AFTER feedback (so it's not cleared)
+    if (state.showMask && filterResult) {
+      drawMaskOverlay(filterResult);
+    }
 
     requestNextFrame();
   }
 
   function processDetection(blobs, filterResult) {
     const candidateCount = blobs.length;
+    state.lastCandidateCount = candidateCount;
 
     if (state.detectionState === 'tracking' && tracker.isTracking) {
       // In tracking mode: try to match detected blobs to tracked positions
@@ -463,7 +502,9 @@
   function getDrawData() {
     const data = {
       fps: state.fps,
-      candidateCount: 0
+      candidateCount: state.lastCandidateCount || 0,
+      resolution: state.resolution || null,
+      threshold: blueFilter ? blueFilter.threshold : 0
     };
 
     if (lastPose && (state.detectionState === 'locked' || state.detectionState === 'tracking')) {
