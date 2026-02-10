@@ -1,180 +1,122 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-Hant">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Antigravity Optical ID Reader</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <title>WebTag 6DoF Locator</title>
     <link rel="stylesheet" href="styles.css" />
-    <script>
-      window.Module = {
-        onRuntimeInitialized() {
-          window.__cvReady = true;
-        }
-      };
-    </script>
   </head>
   <body>
-    <div class="app">
-      <header class="header">
-        <div>
-          <h1>Antigravity Optical ID Reader</h1>
-          <p>Web-based LED optical ID decoding (96-bit payload → 16-bit core ID)</p>
-          <p style="font-size: 11px; color: #666; margin-top: 4px;">v1.2.9 (Build: 2026-02-09)</p>
+    <div id="app">
+      <!-- Camera layer (fullscreen) -->
+      <video id="video" playsinline muted autoplay></video>
+
+      <!-- WebGL processing canvas (hidden, used for GPU blue filter) -->
+      <canvas id="gl-canvas" class="hidden-canvas"></canvas>
+
+      <!-- Overlay canvas for visual feedback (positioned over video) -->
+      <canvas id="overlay"></canvas>
+
+      <!-- Start screen -->
+      <div id="start-screen" class="start-screen">
+        <div class="start-content">
+          <h1>WebTag 6DoF Locator</h1>
+          <p>瀏覽器端 5-LED 定位系統</p>
+          <button id="btn-start" class="btn-primary">啟動相機</button>
+          <p class="hint">v2.0 - 無需 OpenCV</p>
         </div>
-        <div class="status" id="status">Idle</div>
-      </header>
+      </div>
 
-      <main class="main">
-        <section class="panel video-panel">
-          <div class="video-fixed">
-            <div class="video-wrap">
-              <video id="video" playsinline muted></video>
-              <canvas id="processed"></canvas>
-              <canvas id="overlay"></canvas>
+      <!-- Settings drawer (slide-up from bottom) -->
+      <div id="settings-drawer" class="drawer hidden">
+        <div class="drawer-handle" id="drawer-handle">
+          <div class="handle-bar"></div>
+        </div>
+        <div class="drawer-content">
+          <h3>設定</h3>
+
+          <!-- Detection sensitivity -->
+          <div class="setting-group">
+            <label>檢測靈敏度</label>
+            <div class="btn-group">
+              <button class="btn-option" data-sensitivity="low">低</button>
+              <button class="btn-option active" data-sensitivity="medium">中</button>
+              <button class="btn-option" data-sensitivity="high">高</button>
             </div>
           </div>
-          <div class="video-spacer"></div>
-          <div class="video-actions">
-            <button id="btnStart">啟動相機 Start Camera</button>
-            <button id="btnStop" disabled>停止 Stop</button>
+
+          <!-- Blue threshold -->
+          <div class="setting-group">
+            <label>藍光閾值: <span id="val-threshold">0.12</span></label>
+            <input id="cfg-threshold" type="range" min="0.02" max="0.40" step="0.01" value="0.12" />
           </div>
 
-          <!-- 簡化版：只保留5-LED定位 -->
-        </section>
-
-        <section class="panel" style="background: linear-gradient(135deg, #1a3a52 0%, #2a4a62 100%); border: 2px solid #3a6a82;">
-          <h2>📍 6DoF定位系統 (5-LED藍燈)</h2>
-          <div class="hint" style="background: #2a5a72; padding: 12px; border-radius: 4px;">
-            <strong>🚀 快速使用（智能檢測）：</strong><br>
-            1️⃣ 將5-LED設備對準畫面中心（2-3公尺）<br>
-            2️⃣ 點擊「🎯 開始自動偵測」立即定位<br>
-            3️⃣ 查看位置、距離信息<br>
-            <br>
-            <strong>💡 提示：</strong>使用固定參數+ROI智能檢測，無需手動校準
-          </div>
-          <div class="config-grid">
-            <label>環境模式
-              <select id="cfgEnvMode" disabled>
-                <option value="dark">暗環境 (閾值35)</option>
-                <option value="normal" selected>正常室內 (閾值40)</option>
-                <option value="bright">明亮環境 (閾值50)</option>
-              </select>
-            </label>
+          <!-- Brightness floor -->
+          <div class="setting-group">
+            <label>亮度門檻: <span id="val-brightness">0.15</span></label>
+            <input id="cfg-brightness" type="range" min="0.05" max="0.60" step="0.01" value="0.15" />
           </div>
 
-          <!-- 顯示選項 -->
-          <div class="config-grid" style="margin-top: 10px;">
+          <!-- Adaptive threshold toggle -->
+          <div class="setting-group">
             <label>
-              <input id="chkShowMask" type="checkbox" />
-              藍燈遮罩
+              <input id="cfg-adaptive" type="checkbox" checked />
+              自適應閾值
             </label>
+          </div>
+
+          <!-- Audio feedback toggle -->
+          <div class="setting-group">
             <label>
-              <input id="chkMaskOnly" type="checkbox" />
-              只顯示遮罩
+              <input id="cfg-audio" type="checkbox" checked />
+              音效反饋
             </label>
+          </div>
+
+          <!-- Debug: show mask overlay -->
+          <div class="setting-group">
             <label>
-              <input id="chkOnlyEnhance" type="checkbox" />
-              只顯示強化畫面
+              <input id="cfg-show-mask" type="checkbox" />
+              顯示藍光遮罩
             </label>
           </div>
 
-          <!-- HSV 參數調整 -->
-          <div class="config-grid" style="margin-top: 10px;">
-            <label>Hue Min
-              <input id="cfgHueMin" type="range" min="180" max="260" step="1" value="192" />
-              <span id="valHueMin">192</span>
-            </label>
-            <label>Hue Max
-              <input id="cfgHueMax" type="range" min="180" max="260" step="1" value="260" />
-              <span id="valHueMax">260</span>
-            </label>
-            <label>Sat Min
-              <input id="cfgSatMin" type="range" min="0" max="1" step="0.01" value="0.74" />
-              <span id="valSatMin">0.74</span>
-            </label>
-            <label>Val Min
-              <input id="cfgValMin" type="range" min="0" max="1" step="0.01" value="0.70" />
-              <span id="valValMin">0.70</span>
-            </label>
-          </div>
+          <!-- Camera intrinsics (advanced) -->
+          <details class="advanced-settings">
+            <summary>相機參數 (進階)</summary>
+            <div class="setting-grid">
+              <label>fx <input id="cfg-fx" type="number" step="1" placeholder="auto" /></label>
+              <label>fy <input id="cfg-fy" type="number" step="1" placeholder="auto" /></label>
+              <label>cx <input id="cfg-cx" type="number" step="1" placeholder="auto" /></label>
+              <label>cy <input id="cfg-cy" type="number" step="1" placeholder="auto" /></label>
+            </div>
+          </details>
 
-          <div class="video-actions">
-            <button id="btnAutoHsv" disabled style="background: #2a7a52; font-weight: bold;">🎨 自動校準 HSV</button>
+          <div class="drawer-actions">
+            <button id="btn-stop" class="btn-secondary">停止相機</button>
+            <button id="btn-reset" class="btn-secondary">重置追蹤</button>
           </div>
-          <div class="video-actions">
-            <button id="btnLocAuto" disabled style="background: #2a6a92; font-size: 16px; font-weight: bold;">🎯 開始自動偵測</button>
-            <button id="btnLocClear" disabled>清除定位點</button>
-            <button id="btnLocSolve" disabled>手動計算定位</button>
-          </div>
-          <div class="config-grid">
-            <label>fx
-              <input id="cfgFx" type="number" step="1" />
-            </label>
-            <label>fy
-              <input id="cfgFy" type="number" step="1" />
-            </label>
-            <label>cx
-              <input id="cfgCx" type="number" step="1" />
-            </label>
-            <label>cy
-              <input id="cfgCy" type="number" step="1" />
-            </label>
-          </div>
-          <div class="output-row">
-            <div>
-              <div class="label">PnP 狀態</div>
-              <div id="locStatus">-</div>
-            </div>
-            <div>
-              <div class="label">位置 (mm)</div>
-              <div id="locPos">-</div>
-            </div>
-            <div>
-              <div class="label">姿態 (deg)</div>
-              <div id="locRot">-</div>
-            </div>
-            <div>
-              <div class="label">距離 (m)</div>
-              <div id="locDist">-</div>
-            </div>
-          </div>
-          <div class="output-row">
-            <div>
-              <div class="label">視頻解析度</div>
-              <div id="camRes">-</div>
-            </div>
-            <div>
-              <div class="label">實際 FPS</div>
-              <div id="camFps">-</div>
-            </div>
-            <div>
-              <div class="label">DPR</div>
-              <div id="camDpr">-</div>
-            </div>
-          </div>
-          <div class="output-row">
-            <div>
-              <div class="label">藍燈品質</div>
-              <div id="ledQuality">-</div>
-            </div>
-          </div>
-          <div class="video-actions">
-            <button id="btnLedQuality" disabled>估算藍燈品質</button>
-          </div>
-          <div class="log" id="qualityLog"></div>
-        </section>
+        </div>
+      </div>
 
-        <!-- 已刪除：Device Check, Decoder Config, Live Metrics -->
-
-        <section class="panel output">
-          <h2>📊 Console診斷日誌</h2>
-          <div class="log" id="log" style="height: 200px; overflow-y: auto;"></div>
-        </section>
-      </main>
+      <!-- Settings toggle button (gear icon) -->
+      <button id="btn-settings" class="btn-settings hidden">
+        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
+      </button>
     </div>
 
-    <script src="https://docs.opencv.org/4.x/opencv.js"></script>
-    <script src="geometry-based-detection.js"></script>
+    <!-- Load modules (no OpenCV!) -->
+    <script src="blue-filter.js"></script>
+    <script src="blob-detector.js"></script>
+    <script src="geometry-matcher.js"></script>
+    <script src="pnp-solver.js"></script>
+    <script src="kalman.js"></script>
+    <script src="feedback.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

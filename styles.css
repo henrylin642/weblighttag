@@ -1,268 +1,363 @@
-:root {
-  --bg: #0b0f13;
-  --panel: #121820;
-  --panel-alt: #151c26;
-  --text: #eef2f6;
-  --muted: #9aa6b2;
-  --accent: #6be1ff;
-  --danger: #ff6b6b;
-  --good: #6bff95;
-  --border: #222a35;
-}
+/* ===================================================================
+   WebTag 6DoF Locator - Fullscreen Camera UI
+   =================================================================== */
 
-* { box-sizing: border-box; }
-body {
+* {
   margin: 0;
-  font-family: "Space Grotesk", "IBM Plex Sans", "Segoe UI", sans-serif;
-  background: radial-gradient(circle at top, #0f1722, #0b0f13 55%);
-  color: var(--text);
+  padding: 0;
+  box-sizing: border-box;
 }
 
-.app {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 24px;
-}
-
-.header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 20px;
-}
-
-.header h1 {
-  margin: 0 0 8px 0;
-  font-size: 26px;
-  letter-spacing: 0.5px;
-}
-
-.header p {
-  margin: 0;
-  color: var(--muted);
-}
-
-.status {
-  background: var(--panel-alt);
-  border: 1px solid var(--border);
-  padding: 10px 16px;
-  border-radius: 8px;
-  font-weight: 600;
-}
-
-.main {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 16px;
-}
-
-.panel {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 16px;
-}
-
-.video-panel {
-  grid-column: span 2;
-  align-self: start;
-}
-
-.video-fixed {
-  position: fixed;
-  top: calc(env(safe-area-inset-top, 0px) + 8px);
-  left: 50%;
-  transform: translateX(-50%);
-  width: min(1200px, calc(100% - 32px));
-  z-index: 20;
-}
-
-.video-wrap {
-  position: relative;
-  width: 100%;
-  aspect-ratio: 16 / 9;
-  background: #05070a;
-  border-radius: 12px;
-  overflow: hidden;
-  border: 1px solid var(--border);
-}
-
-.video-spacer {
-  width: 100%;
-  aspect-ratio: 16 / 9;
-}
-
-video, canvas {
-  position: absolute;
-  inset: 0;
+html, body {
   width: 100%;
   height: 100%;
-  object-fit: contain;  /* 不裁切，保持原始比例 */
+  overflow: hidden;
+  background: #000;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: #fff;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 
-#processed {
+/* --- Main app container --- */
+
+#app {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* --- Video (fullscreen background) --- */
+
+#video {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
   z-index: 1;
+}
+
+/* --- Hidden canvas (WebGL processing) --- */
+
+.hidden-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1px;
+  height: 1px;
   opacity: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* --- Overlay canvas (visual feedback) --- */
+
+#overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 10;
   pointer-events: none;
 }
 
-#overlay {
-  z-index: 2;
-}
+/* --- Start screen --- */
 
-.video-actions {
+.start-screen {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 100;
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 12px;
-}
-
-button {
-  background: var(--accent);
-  color: #051018;
-  border: none;
-  border-radius: 8px;
-  padding: 8px 12px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-button:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.toggle {
-  display: inline-flex;
   align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--muted);
-  padding: 4px 8px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: #0b1016;
+  justify-content: center;
+  background: linear-gradient(135deg, #0a1628 0%, #1a2a48 50%, #0a1628 100%);
 }
 
-.toggle input {
-  margin: 0;
+.start-screen.hidden {
+  display: none;
 }
 
-.hint {
-  margin-top: 8px;
-  color: var(--muted);
-  font-size: 13px;
+.start-content {
+  text-align: center;
+  padding: 40px 20px;
 }
 
-.device-grid,
-.config-grid,
-.metrics,
-.output-row {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  gap: 12px;
+.start-content h1 {
+  font-size: 28px;
+  font-weight: 700;
+  margin-bottom: 8px;
+  background: linear-gradient(90deg, #4a9eff, #50e0a0);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
 }
 
-.viz {
+.start-content p {
+  color: #8899bb;
+  font-size: 14px;
+  margin-bottom: 24px;
+}
+
+.start-content .hint {
+  color: #556677;
+  font-size: 11px;
   margin-top: 16px;
 }
 
-.bars {
-  margin-top: 8px;
-  display: grid;
-  gap: 8px;
+/* --- Buttons --- */
+
+.btn-primary {
+  padding: 14px 48px;
+  font-size: 18px;
+  font-weight: 600;
+  color: #fff;
+  background: linear-gradient(135deg, #2a6aaa, #3a8acc);
+  border: none;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: transform 0.1s, opacity 0.2s;
 }
 
-.bar-row {
-  display: grid;
-  grid-template-columns: 60px 1fr 48px;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  color: var(--muted);
+.btn-primary:active {
+  transform: scale(0.96);
+  opacity: 0.9;
 }
 
-.bar-track {
-  height: 10px;
-  background: #0b1016;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  overflow: hidden;
+.btn-secondary {
+  padding: 10px 20px;
+  font-size: 13px;
+  color: #ccc;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  cursor: pointer;
 }
 
-.bar-fill {
-  height: 100%;
-  width: 0%;
-  background: linear-gradient(90deg, #6be1ff, #6bff95);
-  transition: width 0.1s linear;
+.btn-secondary:active {
+  background: rgba(255, 255, 255, 0.2);
 }
 
-label {
+/* --- Settings toggle button --- */
+
+.btn-settings {
+  position: absolute;
+  bottom: 90px;
+  right: 16px;
+  z-index: 20;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0, 0, 0, 0.5);
+  color: rgba(255, 255, 255, 0.7);
   display: flex;
-  flex-direction: column;
-  font-size: 12px;
-  color: var(--muted);
-  gap: 6px;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  transition: opacity 0.2s;
 }
 
-input {
-  background: #0b1016;
-  border: 1px solid var(--border);
-  color: var(--text);
-  border-radius: 6px;
-  padding: 6px 8px;
+.btn-settings.hidden {
+  display: none;
+}
+
+.btn-settings:active {
+  background: rgba(0, 0, 0, 0.7);
+}
+
+/* --- Settings drawer --- */
+
+.drawer {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 50;
+  background: rgba(10, 15, 30, 0.95);
+  border-top-left-radius: 16px;
+  border-top-right-radius: 16px;
+  max-height: 70vh;
+  overflow-y: auto;
+  transform: translateY(0);
+  transition: transform 0.3s ease-out;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+.drawer.hidden {
+  transform: translateY(100%);
+  pointer-events: none;
+}
+
+.drawer-handle {
+  display: flex;
+  justify-content: center;
+  padding: 10px 0 6px;
+  cursor: pointer;
+}
+
+.handle-bar {
+  width: 36px;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.3);
+  border-radius: 2px;
+}
+
+.drawer-content {
+  padding: 0 20px 30px;
+}
+
+.drawer-content h3 {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 16px;
+  color: #aabbcc;
+}
+
+/* --- Setting groups --- */
+
+.setting-group {
+  margin-bottom: 14px;
+}
+
+.setting-group > label {
+  display: block;
   font-size: 13px;
+  color: #8899aa;
+  margin-bottom: 6px;
 }
 
-select {
-  background: #0b1016;
-  border: 1px solid var(--border);
-  color: var(--text);
-  border-radius: 6px;
-  padding: 6px 8px;
-  font-size: 13px;
+.setting-group label span {
+  color: #aabbcc;
+  font-weight: 500;
 }
 
-input[type="range"] {
+.setting-group input[type="range"] {
+  width: 100%;
+  height: 4px;
+  -webkit-appearance: none;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 2px;
+  outline: none;
+  border: none;
   padding: 0;
 }
 
-label span {
+.setting-group input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #4a9eff;
+  cursor: pointer;
+}
+
+.setting-group input[type="checkbox"] {
+  margin-right: 6px;
+  accent-color: #4a9eff;
+}
+
+/* --- Button group (sensitivity) --- */
+
+.btn-group {
+  display: flex;
+  gap: 6px;
+}
+
+.btn-option {
+  flex: 1;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: #8899aa;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.btn-option.active {
+  color: #fff;
+  background: rgba(74, 158, 255, 0.3);
+  border-color: rgba(74, 158, 255, 0.6);
+}
+
+.btn-option:active {
+  transform: scale(0.96);
+}
+
+/* --- Advanced settings --- */
+
+.advanced-settings {
+  margin-top: 16px;
+}
+
+.advanced-settings summary {
+  font-size: 13px;
+  color: #667788;
+  cursor: pointer;
+  padding: 8px 0;
+}
+
+.setting-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.setting-grid label {
   font-size: 12px;
-  color: var(--muted);
+  color: #667788;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
-.label {
-  color: var(--muted);
-  font-size: 12px;
+.setting-grid input[type="number"] {
+  width: 100%;
+  padding: 6px 8px;
+  font-size: 13px;
+  color: #ccc;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  outline: none;
 }
 
-.support-hint {
-  margin-top: 10px;
-  font-size: 12px;
+.setting-grid input[type="number"]:focus {
+  border-color: rgba(74, 158, 255, 0.5);
 }
 
-.support-hint.bad { color: var(--danger); }
-.support-hint.good { color: var(--good); }
+/* --- Drawer actions --- */
 
-.output {
-  grid-column: span 2;
+.drawer-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 20px;
 }
 
-.log {
-  margin-top: 12px;
-  background: #0b1016;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 10px;
-  min-height: 80px;
-  font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
-  font-size: 12px;
-  white-space: pre-wrap;
+.drawer-actions .btn-secondary {
+  flex: 1;
 }
 
-@media (max-width: 900px) {
-  .video-panel, .output { grid-column: span 1; }
-  .video-fixed { width: calc(100% - 24px); }
+/* --- Safe area for devices with notch --- */
+
+@supports (padding: env(safe-area-inset-bottom)) {
+  .drawer-content {
+    padding-bottom: calc(30px + env(safe-area-inset-bottom));
+  }
+
+  .btn-settings {
+    bottom: calc(90px + env(safe-area-inset-bottom));
+  }
 }
