@@ -36,7 +36,7 @@
 
   // --- Modules ---
 
-  let blueFilter, blobDetector, geometryMatcher, pnpSolver, tracker, feedback;
+  let blueFilter, peakDetector, blobDetector, geometryMatcher, pnpSolver, tracker, feedback;
 
   // --- DOM Elements ---
 
@@ -79,6 +79,14 @@
   function initModules() {
     blueFilter = new BlueFilter(glCanvas);
     blueFilter.init();
+
+    peakDetector = new PeakDetector({
+      nmsRadius: 3,
+      minPeakScore: 80,
+      minPointiness: 1.5,
+      minIsotropy: 0.3,
+      maxCandidates: 15
+    });
 
     blobDetector = new BlobDetector({
       minArea: 4,
@@ -279,7 +287,21 @@
     }
 
     if (filterResult) {
-      // Step 2: Detect blobs
+      // 記錄 downscale 值供自適應 NMS 使用
+      state.lastDownscale = filterResult.downscale;
+
+      // Step 2a: 峰值檢測（主要策略 — 能從連通藍色區域中提取 LED 局部峰值）
+      const peaks = peakDetector.detect(
+        filterResult.mask,
+        filterResult.brightnessValues,
+        filterResult.blueDiffValues,
+        filterResult.width,
+        filterResult.height,
+        filterResult.downscale,
+        filterResult.bluePixels
+      );
+
+      // Step 2b: Blob 檢測（回退策略 — 適用於 LED 獨立分離的情況）
       const blobs = blobDetector.detect(
         filterResult.mask,
         filterResult.width,
@@ -289,13 +311,21 @@
         filterResult.brightnessValues
       );
 
+      // Step 2c: 合併兩種策略的候選
+      const candidates = mergeCandidates(peaks, blobs);
+
       // Step 3: Run detection pipeline based on state
-      processDetection(blobs, filterResult);
+      processDetection(candidates, filterResult);
 
       // Debug logging (every 2 seconds)
       if (state.frameCount === 1) {
         const maskSum = filterResult.mask.reduce((s, v) => s + (v > 0 ? 1 : 0), 0);
-        console.log(`[debug] filter: ${filterResult.width}x${filterResult.height}, mask白點: ${maskSum}, blobs: ${blobs.length}, 閾值: ${blueFilter.threshold.toFixed(3)}`);
+        console.log(`[debug] filter: ${filterResult.width}x${filterResult.height}, mask白點: ${maskSum}, peaks: ${peaks.length}, blobs: ${blobs.length}, 候選: ${candidates.length}, 閾值: ${blueFilter.threshold.toFixed(3)}`);
+        // 峰值診斷資訊
+        if (peaks.length > 0) {
+          const topPeak = peaks[0];
+          console.log(`[peak] top: score=${topPeak.peakScore.toFixed(1)}, pointiness=${topPeak.pointiness.toFixed(2)}, isotropy=${topPeak.isotropy.toFixed(2)}, pos=(${topPeak.x.toFixed(3)},${topPeak.y.toFixed(3)})`);
+        }
       }
     } else if (state.frameCount === 1) {
       console.warn('[debug] blueFilter.process returned null, video.readyState:', video.readyState);
@@ -318,6 +348,47 @@
     }
 
     requestNextFrame();
+  }
+
+  /**
+   * 合併峰值檢測和 blob 檢測的候選。
+   * 以峰值為主，補充距離所有峰值 > 2% 的 blob。
+   */
+  function mergeCandidates(peaks, blobs) {
+    // 以峰值為主
+    const merged = [...peaks];
+
+    // 補充不與任何峰值重疊的 blob
+    const minSeparation = 0.02; // 2% 圖像尺寸
+    for (const blob of blobs) {
+      let tooClose = false;
+      for (const peak of merged) {
+        const dx = blob.x - peak.x;
+        const dy = blob.y - peak.y;
+        if (Math.sqrt(dx * dx + dy * dy) < minSeparation) {
+          tooClose = true;
+          break;
+        }
+      }
+      if (!tooClose) {
+        merged.push(blob);
+      }
+    }
+
+    // 按複合分數排序，取 top 20
+    // 注意：峰值候選用 realBrightness/brightness，blob 候選用 maxRealBrightness/maxBrightness
+    merged.sort((a, b) => {
+      const realBrightA = a.maxRealBrightness || a.realBrightness || 0;
+      const blueDiffA = a.maxBrightness || a.brightness || 0;
+      const sa = realBrightA * 0.5 + blueDiffA * 0.5;
+
+      const realBrightB = b.maxRealBrightness || b.realBrightness || 0;
+      const blueDiffB = b.maxBrightness || b.brightness || 0;
+      const sb = realBrightB * 0.5 + blueDiffB * 0.5;
+      return sb - sa;
+    });
+
+    return merged.slice(0, 20);
   }
 
   function processDetection(blobs, filterResult) {
@@ -475,6 +546,16 @@
     if (result.success && result.reprojError < 30) {
       lastPose = result;
       poseStability = poseStability * 0.8 + stability * 0.2;
+
+      // 自適應峰值檢測器：根據距離調整 NMS 半徑
+      if (peakDetector && result.distance > 0) {
+        const distanceMM = result.distance * 1000;
+        const ledDiameterMM = 5;
+        // 計算 LED 在降採樣圖中的預期像素直徑（使用實際 downscale 值）
+        const ds = state.lastDownscale || 4;
+        const expectedPixels = (ledDiameterMM / distanceMM) * pnpSolver.fx / ds;
+        peakDetector.setExpectedLEDSize(expectedPixels);
+      }
     }
   }
 

@@ -109,12 +109,20 @@ class BlueFilter {
     // Apply morphological opening (erosion + dilation) to clean noise
     const mask = this._morphCleanup(rawMask, outW, outH);
 
+    // Build sparse blue pixel index list for peak detector (fast NMS scanning)
+    const bluePixels = [];
+    for (let i = 0; i < outW * outH; i++) {
+      if (mask[i] > 0 || brightnessValues[i] > 200) {
+        bluePixels.push(i);
+      }
+    }
+
     // Adaptive threshold update
     if (this.adaptiveEnabled) {
       this._updateAdaptiveThreshold(blueDiffValues, outW * outH);
     }
 
-    return { mask, blueDiffValues, brightnessValues, width: outW, height: outH, downscale };
+    return { mask, blueDiffValues, brightnessValues, bluePixels, width: outW, height: outH, downscale };
   }
 
   /**
