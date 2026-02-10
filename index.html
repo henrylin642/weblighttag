@@ -75,12 +75,32 @@
             </label>
           </div>
 
-          <!-- Debug: show mask overlay -->
+          <!-- Mask view mode -->
           <div class="setting-group">
-            <label>
-              <input id="cfg-show-mask" type="checkbox" />
-              顯示藍光遮罩
-            </label>
+            <label>藍光遮罩顯示</label>
+            <div class="btn-group">
+              <button class="btn-option active" data-mask="off">關閉</button>
+              <button class="btn-option" data-mask="overlay">疊加</button>
+              <button class="btn-option" data-mask="only">僅藍光</button>
+            </div>
+          </div>
+
+          <!-- HSV Hue Center -->
+          <div class="setting-group">
+            <label>色相中心: <span id="val-hue">227°</span></label>
+            <input id="cfg-hue" type="range" min="0" max="360" step="1" value="227" />
+          </div>
+
+          <!-- HSV Hue Range -->
+          <div class="setting-group">
+            <label>色相範圍: <span id="val-hue-range">±43°</span></label>
+            <input id="cfg-hue-range" type="range" min="5" max="180" step="1" value="43" />
+          </div>
+
+          <!-- HSV Saturation Min -->
+          <div class="setting-group">
+            <label>飽和度門檻: <span id="val-sat">0.15</span></label>
+            <input id="cfg-sat" type="range" min="0" max="1.00" step="0.01" value="0.15" />
           </div>
 
           <!-- Camera intrinsics (advanced) -->

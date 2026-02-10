@@ -14,7 +14,7 @@
     running: false,
     stream: null,
     animFrameId: null,
-    showMask: false,
+    maskMode: 'off', // 'off' | 'overlay' | 'only'
 
     // FPS tracking
     frameCount: 0,
@@ -58,9 +58,16 @@
   const cfgBrightness = $('cfg-brightness');
   const cfgAdaptive = $('cfg-adaptive');
   const cfgAudio = $('cfg-audio');
-  const cfgShowMask = $('cfg-show-mask');
   const valThreshold = $('val-threshold');
   const valBrightness = $('val-brightness');
+
+  // HSV controls
+  const cfgHue = $('cfg-hue');
+  const cfgHueRange = $('cfg-hue-range');
+  const cfgSat = $('cfg-sat');
+  const valHue = $('val-hue');
+  const valHueRange = $('val-hue-range');
+  const valSat = $('val-sat');
 
   const cfgFx = $('cfg-fx');
   const cfgFy = $('cfg-fy');
@@ -296,11 +303,17 @@
     // Step 4: Draw visual feedback (clears canvas first)
     const displayW = window.innerWidth;
     const displayH = window.innerHeight;
-    feedback.draw(overlayCtx, displayW, displayH, getDrawData());
 
-    // Step 5: Draw mask overlay AFTER feedback (so it's not cleared)
-    if (state.showMask && filterResult) {
-      drawMaskOverlay(filterResult);
+    if (state.maskMode === 'only' && filterResult) {
+      // "Only blue" mode: show blue mask on black background, skip normal feedback
+      drawMaskFullscreen(filterResult);
+    } else {
+      feedback.draw(overlayCtx, displayW, displayH, getDrawData());
+
+      // Draw mask overlay AFTER feedback (so it's not cleared)
+      if (state.maskMode === 'overlay' && filterResult) {
+        drawMaskOverlay(filterResult);
+      }
     }
 
     requestNextFrame();
@@ -524,11 +537,42 @@
     return data;
   }
 
-  function drawMaskOverlay(filterResult) {
-    if (!filterResult) return;
-    const { mask, width, height } = filterResult;
+  /**
+   * Compute object-fit:cover mapping from mask coords to display coords.
+   * The mask is at video resolution / downscale, so it maps 1:1 to video space.
+   * The video is displayed with object-fit:cover, which may crop edges.
+   */
+  function getMaskDisplayRect(maskW, maskH) {
+    const vw = video.videoWidth;
+    const vh = video.videoHeight;
     const displayW = window.innerWidth;
     const displayH = window.innerHeight;
+
+    const videoAspect = vw / vh;
+    const displayAspect = displayW / displayH;
+
+    let drawX, drawY, drawW, drawH;
+
+    if (videoAspect > displayAspect) {
+      // Video wider than display - horizontal crop
+      drawH = displayH;
+      drawW = displayH * videoAspect;
+      drawX = (displayW - drawW) / 2;
+      drawY = 0;
+    } else {
+      // Video taller than display - vertical crop
+      drawW = displayW;
+      drawH = displayW / videoAspect;
+      drawX = 0;
+      drawY = (displayH - drawH) / 2;
+    }
+
+    return { drawX, drawY, drawW, drawH };
+  }
+
+  function drawMaskOverlay(filterResult) {
+    if (!filterResult) return;
+    const { mask, blueDiffValues, width, height } = filterResult;
 
     // Create a small canvas to hold the mask
     const tmpCanvas = document.createElement('canvas');
@@ -539,19 +583,63 @@
 
     for (let i = 0; i < width * height; i++) {
       const val = mask[i];
-      imgData.data[i * 4] = 0;       // R
-      imgData.data[i * 4 + 1] = 0;   // G
-      imgData.data[i * 4 + 2] = val;  // B
-      imgData.data[i * 4 + 3] = val > 0 ? 120 : 0; // A
+      const strength = blueDiffValues ? blueDiffValues[i] : val;
+      imgData.data[i * 4] = 0;                    // R
+      imgData.data[i * 4 + 1] = 0;                // G
+      imgData.data[i * 4 + 2] = val > 0 ? 255 : 0; // B
+      imgData.data[i * 4 + 3] = val > 0 ? Math.min(200, strength + 80) : 0; // A
     }
 
     tmpCtx.putImageData(imgData, 0, 0);
 
-    // Draw scaled mask overlay
+    // Draw with object-fit:cover alignment
+    const rect = getMaskDisplayRect(width, height);
     overlayCtx.save();
-    overlayCtx.globalAlpha = 0.5;
-    overlayCtx.drawImage(tmpCanvas, 0, 0, displayW, displayH);
+    overlayCtx.globalAlpha = 0.6;
+    overlayCtx.drawImage(tmpCanvas, rect.drawX, rect.drawY, rect.drawW, rect.drawH);
     overlayCtx.restore();
+  }
+
+  function drawMaskFullscreen(filterResult) {
+    if (!filterResult) return;
+    const { mask, blueDiffValues, width, height } = filterResult;
+    const displayW = window.innerWidth;
+    const displayH = window.innerHeight;
+
+    // Black background
+    overlayCtx.clearRect(0, 0, displayW, displayH);
+    overlayCtx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+    overlayCtx.fillRect(0, 0, displayW, displayH);
+
+    // Create mask image
+    const tmpCanvas = document.createElement('canvas');
+    tmpCanvas.width = width;
+    tmpCanvas.height = height;
+    const tmpCtx = tmpCanvas.getContext('2d');
+    const imgData = tmpCtx.createImageData(width, height);
+
+    for (let i = 0; i < width * height; i++) {
+      const val = mask[i];
+      const strength = blueDiffValues ? blueDiffValues[i] : 255;
+      if (val > 0) {
+        // Blue bright spots
+        imgData.data[i * 4] = Math.min(255, strength);       // R (slight)
+        imgData.data[i * 4 + 1] = Math.min(255, strength);   // G (slight)
+        imgData.data[i * 4 + 2] = 255;                        // B (full)
+        imgData.data[i * 4 + 3] = 255;                        // A
+      } else {
+        imgData.data[i * 4 + 3] = 0; // Transparent (show black bg)
+      }
+    }
+
+    tmpCtx.putImageData(imgData, 0, 0);
+
+    // Draw with object-fit:cover alignment
+    const rect = getMaskDisplayRect(width, height);
+    overlayCtx.drawImage(tmpCanvas, rect.drawX, rect.drawY, rect.drawW, rect.drawH);
+
+    // Still draw HUD info on top
+    feedback.draw(overlayCtx, displayW, displayH, getDrawData(), true);
   }
 
   // --- Settings ---
@@ -636,9 +724,36 @@
       if (feedback) feedback.audioEnabled = cfgAudio.checked;
     });
 
-    // Show mask toggle
-    cfgShowMask.addEventListener('change', () => {
-      state.showMask = cfgShowMask.checked;
+    // Mask view mode buttons
+    document.querySelectorAll('[data-mask]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('[data-mask]').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        state.maskMode = btn.dataset.mask;
+        // Toggle video visibility for "only" mode
+        video.style.opacity = (state.maskMode === 'only') ? '0' : '1';
+      });
+    });
+
+    // HSV Hue Center
+    cfgHue.addEventListener('input', () => {
+      const deg = parseFloat(cfgHue.value);
+      valHue.textContent = deg + '°';
+      if (blueFilter) blueFilter.setHueCenter(deg / 360);
+    });
+
+    // HSV Hue Range
+    cfgHueRange.addEventListener('input', () => {
+      const deg = parseFloat(cfgHueRange.value);
+      valHueRange.textContent = '±' + deg + '°';
+      if (blueFilter) blueFilter.setHueRange(deg / 360);
+    });
+
+    // HSV Saturation Min
+    cfgSat.addEventListener('input', () => {
+      const val = parseFloat(cfgSat.value);
+      valSat.textContent = val.toFixed(2);
+      if (blueFilter) blueFilter.setSatMin(val);
     });
 
     // Camera intrinsics
