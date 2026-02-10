@@ -17,6 +17,11 @@ class BlueFilter {
     this.brightnessFloor = 0.15;
     this.adaptiveEnabled = true;
     this._ready = false;
+
+    // HSV filter parameters
+    this.hueCenter = 0.63;    // Blue hue center (0-1, ~227°/360°)
+    this.hueRange = 0.12;     // Hue tolerance (±0.12 = ±43°, covers ~184°-270°)
+    this.satMin = 0.15;       // Minimum saturation
   }
 
   init() {
@@ -69,6 +74,9 @@ class BlueFilter {
     gl.uniform1i(this.uVideo, 0);
     gl.uniform1f(this.uThreshold, this.threshold);
     gl.uniform1f(this.uBrightness, this.brightnessFloor);
+    gl.uniform1f(this.uHueCenter, this.hueCenter);
+    gl.uniform1f(this.uHueRange, this.hueRange);
+    gl.uniform1f(this.uSatMin, this.satMin);
 
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
@@ -80,12 +88,20 @@ class BlueFilter {
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 
     // Extract binary mask (R channel) and blue diff strength (G channel)
+    // IMPORTANT: WebGL readPixels returns data bottom-to-top (OpenGL convention)
+    // We flip Y here so the mask uses top-left origin (standard image convention)
     const mask = new Uint8Array(outW * outH);
     const blueDiffValues = new Uint8Array(outW * outH);
 
-    for (let i = 0; i < outW * outH; i++) {
-      mask[i] = pixels[i * 4]; // R channel = binary (0 or 255)
-      blueDiffValues[i] = pixels[i * 4 + 1]; // G channel = blue diff strength
+    for (let y = 0; y < outH; y++) {
+      const srcRow = (outH - 1 - y) * outW; // Flip Y
+      const dstRow = y * outW;
+      for (let x = 0; x < outW; x++) {
+        const srcIdx = (srcRow + x) * 4;
+        const dstIdx = dstRow + x;
+        mask[dstIdx] = pixels[srcIdx];         // R channel = binary (0 or 255)
+        blueDiffValues[dstIdx] = pixels[srcIdx + 1]; // G channel = blue diff strength
+      }
     }
 
     // Adaptive threshold update
@@ -119,6 +135,9 @@ class BlueFilter {
     gl.uniform1i(this.uVideo, 0);
     gl.uniform1f(this.uThreshold, this.threshold);
     gl.uniform1f(this.uBrightness, this.brightnessFloor);
+    gl.uniform1f(this.uHueCenter, this.hueCenter);
+    gl.uniform1f(this.uHueRange, this.hueRange);
+    gl.uniform1f(this.uSatMin, this.satMin);
 
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
@@ -129,6 +148,18 @@ class BlueFilter {
 
   setBrightnessFloor(value) {
     this.brightnessFloor = Math.max(0.05, Math.min(0.80, value));
+  }
+
+  setHueCenter(value) {
+    this.hueCenter = Math.max(0, Math.min(1.0, value));
+  }
+
+  setHueRange(value) {
+    this.hueRange = Math.max(0.01, Math.min(0.5, value));
+  }
+
+  setSatMin(value) {
+    this.satMin = Math.max(0, Math.min(1.0, value));
   }
 
   destroy() {
@@ -174,6 +205,9 @@ class BlueFilter {
     this.uVideo = gl.getUniformLocation(program, 'u_video');
     this.uThreshold = gl.getUniformLocation(program, 'u_threshold');
     this.uBrightness = gl.getUniformLocation(program, 'u_brightness');
+    this.uHueCenter = gl.getUniformLocation(program, 'u_hueCenter');
+    this.uHueRange = gl.getUniformLocation(program, 'u_hueRange');
+    this.uSatMin = gl.getUniformLocation(program, 'u_satMin');
 
     return program;
   }
@@ -282,7 +316,20 @@ precision mediump float;
 uniform sampler2D u_video;
 uniform float u_threshold;
 uniform float u_brightness;
+uniform float u_hueCenter;
+uniform float u_hueRange;
+uniform float u_satMin;
 varying vec2 v_texCoord;
+
+// RGB to HSV conversion
+vec3 rgb2hsv(vec3 c) {
+  vec4 K = vec4(0.0, -1.0/3.0, 2.0/3.0, -1.0);
+  vec4 p = mix(vec4(c.bg, K.wz), vec4(c.gb, K.xy), step(c.b, c.g));
+  vec4 q = mix(vec4(p.xyw, c.r), vec4(c.r, p.yzx), step(p.x, c.r));
+  float d = q.x - min(q.w, q.y);
+  float e = 1.0e-10;
+  return vec3(abs(q.z + (q.w - q.y) / (6.0 * d + e)), d / (q.x + e), q.x);
+}
 
 void main() {
   vec4 color = texture2D(u_video, v_texCoord);
@@ -296,8 +343,20 @@ void main() {
   // Brightness gate: LED must be reasonably bright (point light source)
   float brightness = max(r, max(g, b));
 
-  // Combined filter: blue AND bright
-  float isBlue = step(u_threshold, blueDiff) * step(u_brightness, brightness);
+  // HSV-based hue filter for blue range
+  vec3 hsv = rgb2hsv(color.rgb);
+  float hue = hsv.x;       // 0-1 (0=red, 0.33=green, 0.67=blue)
+  float sat = hsv.y;       // 0-1
+
+  // Hue distance (circular, wraps around 0/1)
+  float hueDist = min(abs(hue - u_hueCenter), 1.0 - abs(hue - u_hueCenter));
+  float hueOk = step(hueDist, u_hueRange);
+
+  // Saturation gate: must be sufficiently saturated (not white/gray)
+  float satOk = step(u_satMin, sat);
+
+  // Combined filter: blue diff AND bright AND hue in range AND saturated
+  float isBlue = step(u_threshold, blueDiff) * step(u_brightness, brightness) * hueOk * satOk;
 
   // R = binary mask (0 or 1 -> 0 or 255)
   // G = blue diff strength (clamped to 0-1)

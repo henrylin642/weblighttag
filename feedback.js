@@ -62,24 +62,26 @@ class FeedbackManager {
    * @param {number} height - Canvas height
    * @param {Object} data - Current detection data
    */
-  draw(ctx, width, height, data = {}) {
+  draw(ctx, width, height, data = {}, hudOnly = false) {
     const now = performance.now();
     const stateAge = now - this.stateStartTime;
     this.scanPulse = (Math.sin(now / 500) + 1) / 2; // 0-1 pulsing
 
-    ctx.clearRect(0, 0, width, height);
+    if (!hudOnly) {
+      ctx.clearRect(0, 0, width, height);
 
-    switch (this.state) {
-      case 'scanning':
-        this._drawScanning(ctx, width, height, data, stateAge);
-        break;
-      case 'candidate':
-        this._drawCandidate(ctx, width, height, data, stateAge);
-        break;
-      case 'locked':
-      case 'tracking':
-        this._drawLocked(ctx, width, height, data, stateAge);
-        break;
+      switch (this.state) {
+        case 'scanning':
+          this._drawScanning(ctx, width, height, data, stateAge);
+          break;
+        case 'candidate':
+          this._drawCandidate(ctx, width, height, data, stateAge);
+          break;
+        case 'locked':
+        case 'tracking':
+          this._drawLocked(ctx, width, height, data, stateAge);
+          break;
+      }
     }
 
     // Always draw HUD
