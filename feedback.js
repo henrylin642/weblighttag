@@ -436,9 +436,10 @@ class FeedbackManager {
       ctx.font = '10px monospace';
       ctx.fillStyle = 'rgba(150, 170, 200, 0.6)';
       ctx.textAlign = 'left';
+      const ds = data.downscale || '?';
       const maskPct = (data.maskPercent || 0).toFixed(1);
       const peakInfo = `${data.peakCount || 0}/${data.maxCandidates || 20}`;
-      ctx.fillText(`焦:${data.focusStatus} | 罩:${maskPct}% | 峰:${peakInfo}`, padding, 54);
+      ctx.fillText(`焦:${data.focusStatus} | DS:${ds} | 罩:${maskPct}% | 峰:${peakInfo}`, padding, 54);
     }
 
     if (data.version) {

@@ -51,24 +51,37 @@ class PeakDetector {
     // 2. 計算分數圖（僅遍歷藍色區域像素）
     this._computeScoreMap(mask, brightnessValues, blueDiffValues, width, height, scoreMap, bluePixels);
 
-    // 3. 3×3 盒狀模糊（消除單像素噪點）
-    this._boxBlur3x3(scoreMap, smoothed, width, height);
+    // 3. 條件式模糊：稀疏遮罩時跳過（保留小 LED 峰值銳度）
+    //    典型 LED 場景遮罩佔比 < 12%，此時 blur 會摧毀峰值
+    const totalPixels = width * height;
+    const blueCount = bluePixels ? bluePixels.length : 0;
+    const bluePercent = (blueCount / totalPixels) * 100;
+
+    let nmsInput;
+    if (bluePercent < 15) {
+      // 稀疏模式：直接用原始 scoreMap
+      nmsInput = scoreMap;
+    } else {
+      // 密集模式：套用模糊抑制噪點
+      this._boxBlur3x3(scoreMap, smoothed, width, height);
+      nmsInput = smoothed;
+    }
 
     // 4. NMS：找局部最大值
-    const rawPeaks = this._nms(smoothed, width, height, bluePixels);
+    const rawPeaks = this._nms(nmsInput, width, height, bluePixels);
 
     // 5. 亞像素精化 + 形狀分析
     const candidates = [];
     for (const peak of rawPeaks) {
       // 亞像素精化
-      const refined = this._subPixelRefine(smoothed, peak.x, peak.y, width, height, 2);
+      const refined = this._subPixelRefine(nmsInput, peak.x, peak.y, width, height, 2);
 
       // 形狀分析：尖銳度 + 各向同性
-      const pointiness = this._computePointiness(smoothed, peak.x, peak.y, width, height);
-      const isotropy = this._computeIsotropy(smoothed, peak.x, peak.y, width, height);
+      const pointiness = this._computePointiness(nmsInput, peak.x, peak.y, width, height);
+      const isotropy = this._computeIsotropy(nmsInput, peak.x, peak.y, width, height);
 
       // 估算面積（分數 > 50% 峰值的像素數）
-      const area = this._estimateArea(smoothed, peak.x, peak.y, width, height, peak.score);
+      const area = this._estimateArea(nmsInput, peak.x, peak.y, width, height, peak.score);
 
       // 原始像素位置的亮度數據
       const idx = peak.y * width + peak.x;

@@ -8,7 +8,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '2.3.2';
+  const APP_VERSION = '2.3.3';
 
   // --- State ---
 
@@ -85,9 +85,9 @@
     blueFilter.init();
 
     peakDetector = new PeakDetector({
-      nmsRadius: 5,
+      nmsRadius: 3,          // 5→3：NMS 窗口 11×11→7×7，允許偵測更近的相鄰峰值
       minPeakScore: 80,
-      minPointiness: 1.15,
+      minPointiness: 1.05,   // 1.15→1.05：合併光暈中 LED 尖銳度僅 1.08-1.2
       minIsotropy: 0.3,
       maxCandidates: 20,
       minBrightness: 80
@@ -150,7 +150,8 @@
       let vh = video.videoHeight;
       console.log(`Camera initial: ${vw}x${vh}`);
 
-      // Try to upgrade resolution via applyConstraints
+      // 合併解析度 + 對焦 + 曝光 + 白平衡為單一 applyConstraints 呼叫
+      // 分開呼叫會導致 Android Chrome 在解析度變更時重置 focusMode
       const track = state.stream.getVideoTracks()[0];
       if (track) {
         const caps = track.getCapabilities ? track.getCapabilities() : {};
@@ -159,38 +160,38 @@
           const maxH = caps.height ? caps.height.max : 1080;
           const targetW = Math.min(maxW, 1920);
           const targetH = Math.min(maxH, 1080);
-          await track.applyConstraints({
+
+          const combined = {
             width: { ideal: targetW },
             height: { ideal: targetH }
-          });
-          // Wait for resolution to update
-          await new Promise(r => setTimeout(r, 300));
+          };
+          if (caps.focusMode) {
+            combined.focusMode = 'continuous';
+          }
+          if (caps.exposureMode) {
+            combined.exposureMode = 'continuous';
+          }
+          if (caps.whiteBalanceMode) {
+            combined.whiteBalanceMode = 'continuous';
+          }
+
+          await track.applyConstraints(combined);
+
+          // 等待硬體穩定（合併約束需較長時間）
+          await new Promise(r => setTimeout(r, 500));
+
           vw = video.videoWidth;
           vh = video.videoHeight;
           console.log(`Camera upgraded: ${vw}x${vh} (max: ${maxW}x${maxH})`);
+
+          // 透過 getSettings() 驗證實際對焦狀態
+          const settings = track.getSettings();
+          state.focusStatus = settings.focusMode || (caps.focusMode ? 'requested' : 'unsupported');
+          console.log(`focusMode actual: ${state.focusStatus}, exposure: ${settings.exposureMode || 'N/A'}`);
         } catch (e) {
           console.warn('applyConstraints failed:', e);
-        }
-
-        // Apply camera settings directly (not via { advanced: [...] } which is silently ignored on mobile Chrome)
-        if (caps.focusMode) {
-          try {
-            await track.applyConstraints({ focusMode: 'continuous' });
-            state.focusStatus = 'continuous';
-            console.log('focusMode: continuous applied');
-          } catch (e) {
-            console.warn('focusMode failed:', e.message);
-            state.focusStatus = 'failed';
-          }
-        } else {
-          state.focusStatus = 'unsupported';
-          console.log('focusMode not in capabilities');
-        }
-        if (caps.exposureMode) {
-          try { await track.applyConstraints({ exposureMode: 'continuous' }); } catch (e) {}
-        }
-        if (caps.whiteBalanceMode) {
-          try { await track.applyConstraints({ whiteBalanceMode: 'continuous' }); } catch (e) {}
+          if (e.constraint) console.warn('Failed constraint:', e.constraint);
+          state.focusStatus = 'failed';
         }
       }
 
@@ -304,10 +305,11 @@
       state.lastFpsTime = now;
     }
 
-    // Step 1: Run WebGL blue filter
+    // Step 1: Run WebGL blue filter (downscale=2 → 960×540)
+    // v2.3.3: 3→2 提升 LED 像素大小（~4px→~6px @50cm），WebGL 處理影響可忽略
     let filterResult = null;
     try {
-      filterResult = blueFilter.process(video, 3);
+      filterResult = blueFilter.process(video, 2);
     } catch (e) {
       if (state.frameCount === 1) console.error('BlueFilter error:', e);
     }
@@ -755,6 +757,7 @@
       version: APP_VERSION,
       // Debug info for mobile HUD
       focusStatus: state.focusStatus || 'unknown',
+      downscale: state.lastDownscale || '?',
       maskPercent: state.lastMaskPercent || 0,
       peakCount: state.lastPeakCount || 0,
       maxCandidates: 20
