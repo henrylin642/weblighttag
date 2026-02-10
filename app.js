@@ -8,7 +8,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '2.1.0';
+  const APP_VERSION = '2.2.0';
 
   // --- State ---
 
@@ -83,11 +83,12 @@
     blueFilter.init();
 
     peakDetector = new PeakDetector({
-      nmsRadius: 3,
+      nmsRadius: 5,
       minPeakScore: 80,
-      minPointiness: 1.5,
+      minPointiness: 1.15,
       minIsotropy: 0.3,
-      maxCandidates: 15
+      maxCandidates: 20,
+      minBrightness: 80
     });
 
     blobDetector = new BlobDetector({
@@ -149,8 +150,8 @@
       // Try to upgrade resolution via applyConstraints
       const track = state.stream.getVideoTracks()[0];
       if (track) {
+        const caps = track.getCapabilities ? track.getCapabilities() : {};
         try {
-          const caps = track.getCapabilities ? track.getCapabilities() : {};
           const maxW = caps.width ? caps.width.max : 1920;
           const maxH = caps.height ? caps.height.max : 1080;
           const targetW = Math.min(maxW, 1920);

@@ -20,8 +20,8 @@ class BlueFilter {
 
     // HSV filter parameters
     this.hueCenter = 0.63;    // Blue hue center (0-1, ~227°/360°)
-    this.hueRange = 0.12;     // Hue tolerance (±0.12 = ±43°, covers ~184°-270°)
-    this.satMin = 0.15;       // Minimum saturation
+    this.hueRange = 0.083;    // Hue tolerance (±0.083 = ±30°, covers ~197°-257°)
+    this.satMin = 0.25;       // Minimum saturation (rejects desaturated environmental blue)
   }
 
   init() {
@@ -285,28 +285,36 @@ class BlueFilter {
   }
 
   _updateAdaptiveThreshold(blueDiffValues, count) {
-    // Compute the 97th percentile of blue diff values to set adaptive threshold
-    // Using 97th instead of 99.5th for more stable estimation (less sensitive to noise clusters)
+    // Build histogram ONLY from pixels with meaningful blue signal (>5)
+    // Avoids letting the vast zero-valued background drag the percentile down
     const histogram = new Uint32Array(256);
+    let signalCount = 0;
     for (let i = 0; i < count; i++) {
-      histogram[blueDiffValues[i]]++;
+      if (blueDiffValues[i] > 5) {
+        histogram[blueDiffValues[i]]++;
+        signalCount++;
+      }
     }
 
-    const targetCount = Math.floor(count * 0.97);
+    // Need minimum signal pixels to compute meaningful percentile
+    if (signalCount < 50) return;
+
+    // 99th percentile of signal pixels (top 1% are likely LEDs/strips)
+    const targetCount = Math.floor(signalCount * 0.99);
     let cumulative = 0;
-    let percentile97 = 0;
-    for (let i = 0; i < 256; i++) {
+    let percentile99 = 0;
+    for (let i = 6; i < 256; i++) {
       cumulative += histogram[i];
       if (cumulative >= targetCount) {
-        percentile97 = i;
+        percentile99 = i;
         break;
       }
     }
 
-    // Convert to normalized (0-1) with 0.6x factor (lower threshold to catch weak blue signals)
-    const adaptiveThresh = (percentile97 / 255) * 0.6;
-    // Smoothly blend with current threshold (EMA), cap at 0.20 to protect saturated LED detection
-    this.threshold = this.threshold * 0.9 + Math.max(0.08, Math.min(0.20, adaptiveThresh)) * 0.1;
+    // Threshold = 35% of the 99th percentile of signal pixels
+    const adaptiveThresh = (percentile99 / 255) * 0.35;
+    // Floor raised to 0.12, ceiling 0.20, EMA smoothing
+    this.threshold = this.threshold * 0.9 + Math.max(0.12, Math.min(0.20, adaptiveThresh)) * 0.1;
   }
 
   /**

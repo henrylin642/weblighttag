@@ -7,11 +7,13 @@
 class PeakDetector {
   constructor(config = {}) {
     // NMS 窗口半徑（實際窗口 = 2R+1）
-    this.nmsRadius = config.nmsRadius || 3;
+    this.nmsRadius = config.nmsRadius || 5;
     // 最低峰值分數（過濾暗噪點）
     this.minPeakScore = config.minPeakScore || 80;
     // 形狀過濾閾值
-    this.minPointiness = config.minPointiness || 1.5;
+    this.minPointiness = config.minPointiness || 1.15;
+    // 最低亮度（排除暗環境噪點）
+    this.minBrightness = config.minBrightness || 60;
     this.minIsotropy = config.minIsotropy || 0.3;
     // 最大返回候選數
     this.maxCandidates = config.maxCandidates || 15;
@@ -101,9 +103,11 @@ class PeakDetector {
       });
     }
 
-    // 6. 形狀過濾：排除非點光源峰值（如燈條上的局部最大值）
+    // 6. 形狀 + 亮度過濾：排除非點光源峰值和暗環境噪點
     const filtered = candidates.filter(c =>
-      c.pointiness >= this.minPointiness && c.isotropy >= this.minIsotropy
+      c.pointiness >= this.minPointiness &&
+      c.isotropy >= this.minIsotropy &&
+      c.realBrightness >= this.minBrightness
     );
 
     // 7. 排序：複合分數 = peakScore × pointiness × isotropy
