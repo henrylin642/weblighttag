@@ -8,7 +8,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '2.2.0';
+  const APP_VERSION = '2.3.0';
 
   // --- State ---
 
@@ -25,6 +25,7 @@
 
     // Detection state
     detectionState: 'idle', // idle | scanning | candidate | locked | tracking
+    focusStatus: 'unknown',
 
     // Offscreen canvas for full-res pixel access (used in sub-pixel refinement)
     offscreen: null,
@@ -120,7 +121,8 @@
         video: {
           facingMode: 'environment',
           width: { ideal: 1920 },
-          height: { ideal: 1080 }
+          height: { ideal: 1080 },
+          focusMode: 'continuous'
         },
         audio: false
       };
@@ -169,24 +171,25 @@
           console.warn('applyConstraints failed:', e);
         }
 
-        // Apply advanced camera settings for focus and exposure
-        try {
-          const advancedConstraints = {};
-          if (caps.focusMode) {
-            advancedConstraints.focusMode = 'continuous';
+        // Apply camera settings directly (not via { advanced: [...] } which is silently ignored on mobile Chrome)
+        if (caps.focusMode) {
+          try {
+            await track.applyConstraints({ focusMode: 'continuous' });
+            state.focusStatus = 'continuous';
+            console.log('focusMode: continuous applied');
+          } catch (e) {
+            console.warn('focusMode failed:', e.message);
+            state.focusStatus = 'failed';
           }
-          if (caps.exposureMode) {
-            advancedConstraints.exposureMode = 'continuous';
-          }
-          if (caps.whiteBalanceMode) {
-            advancedConstraints.whiteBalanceMode = 'continuous';
-          }
-          if (Object.keys(advancedConstraints).length > 0) {
-            await track.applyConstraints({ advanced: [advancedConstraints] });
-            console.log('Camera advanced constraints applied:', advancedConstraints);
-          }
-        } catch (e) {
-          console.warn('Advanced camera constraints not supported:', e.message);
+        } else {
+          state.focusStatus = 'unsupported';
+          console.log('focusMode not in capabilities');
+        }
+        if (caps.exposureMode) {
+          try { await track.applyConstraints({ exposureMode: 'continuous' }); } catch (e) {}
+        }
+        if (caps.whiteBalanceMode) {
+          try { await track.applyConstraints({ whiteBalanceMode: 'continuous' }); } catch (e) {}
         }
       }
 
@@ -347,6 +350,9 @@
       for (const strip of stripBlobs) {
         blobDetector.extractStripEdges(strip, filterResult.mask, filterResult.width, filterResult.height, filterResult.brightnessValues);
       }
+
+      // Track peak count for debug HUD
+      state.lastPeakCount = peaks.length;
 
       // Step 2d: 合併兩種策略的候選
       const candidates = mergeCandidates(peaks, blobs);
@@ -744,7 +750,12 @@
       stripCount: state.lastStripCount || 0,
       resolution: state.resolution || null,
       threshold: blueFilter ? blueFilter.threshold : 0,
-      version: APP_VERSION
+      version: APP_VERSION,
+      // Debug info for mobile HUD
+      focusStatus: state.focusStatus || 'unknown',
+      maskPercent: filterResult ? (filterResult.bluePixels.length / (filterResult.width * filterResult.height) * 100) : 0,
+      peakCount: state.lastPeakCount || 0,
+      maxCandidates: 20
     };
 
     if (lastPose && (state.detectionState === 'locked' || state.detectionState === 'tracking')) {

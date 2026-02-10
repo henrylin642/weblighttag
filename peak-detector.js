@@ -170,7 +170,7 @@ class PeakDetector {
       // 完整遍歷（回退）
       const size = width * height;
       for (let i = 0; i < size; i++) {
-        if (mask[i] > 0 || brightness[i] > 200) {
+        if (mask[i] > 0) {
           const baseScore = brightness[i] * bw + blueDiff[i] * dw;
           output[i] = brightness[i] > 200 ? Math.max(baseScore, brightness[i] * 0.8) : baseScore;
         }

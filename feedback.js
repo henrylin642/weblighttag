@@ -424,11 +424,23 @@ class FeedbackManager {
       }
     }
 
-    // Version label (bottom-left, always visible)
+    // Version label and debug info (bottom-left, always visible)
     // Move above bottom bar when pose info is displayed
+    const hasPoseBar = data.distance !== undefined &&
+      (this.state === 'locked' || this.state === 'tracking');
+
+    // Debug info line (above version label)
+    if (data.focusStatus) {
+      const debugY = hasPoseBar ? h - 98 : h - 17;
+      ctx.font = '10px monospace';
+      ctx.fillStyle = 'rgba(150, 170, 200, 0.6)';
+      ctx.textAlign = 'left';
+      const maskPct = (data.maskPercent || 0).toFixed(1);
+      const peakInfo = `${data.peakCount || 0}/${data.maxCandidates || 20}`;
+      ctx.fillText(`焦:${data.focusStatus} | 罩:${maskPct}% | 峰:${peakInfo}`, padding, debugY);
+    }
+
     if (data.version) {
-      const hasPoseBar = data.distance !== undefined &&
-        (this.state === 'locked' || this.state === 'tracking');
       const versionY = hasPoseBar ? h - 85 : h - 4;
       ctx.font = '10px monospace';
       ctx.fillStyle = 'rgba(100, 120, 150, 0.5)';

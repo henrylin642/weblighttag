@@ -208,40 +208,84 @@ class GeometryMatcher {
       return [];
     }
 
-    // Sort strips by Y position (top to bottom in image = ascending y)
-    // Note: In image coords, y=0 is top, y=1 is bottom
-    const sortedStrips = [...stripBlobs].sort((a, b) => a.y - b.y);
-
-    const matched = [];
-
-    // Validate strip spacing if we have 2+ strips
-    if (sortedStrips.length >= 2) {
-      const spacings = [];
-      for (let i = 1; i < sortedStrips.length; i++) {
-        spacings.push(sortedStrips[i].y - sortedStrips[i - 1].y);
-      }
-
-      // Check if spacings are approximately equal (within tolerance)
-      const avgSpacing = spacings.reduce((sum, s) => sum + s, 0) / spacings.length;
-      const spacingVariation = Math.max(...spacings.map(s => Math.abs(s - avgSpacing) / avgSpacing));
-
-      if (spacingVariation > this.sensitivity.stripSpacingTolerance) {
-        console.warn(`Strip spacing inconsistent: variation ${(spacingVariation * 100).toFixed(1)}%`);
-        // Continue anyway - we'll use what we have
-      }
-    }
-
-    // Assign IDs based on position (top to bottom)
     const stripIds = ['STRIP_TOP', 'STRIP_MID', 'STRIP_BOT'];
 
-    for (let i = 0; i < Math.min(sortedStrips.length, 3); i++) {
-      matched.push({
-        ...sortedStrips[i],
-        id: stripIds[i]
-      });
+    // Fast path: 3 or fewer strips, use directly
+    if (stripBlobs.length <= 3) {
+      const sorted = [...stripBlobs].sort((a, b) => a.y - b.y);
+      return sorted.map((s, i) => ({ ...s, id: stripIds[i] }));
     }
 
-    return matched;
+    // Multiple candidates: find best triplet by scoring all C(n,3) combinations
+    // n <= ~10 so max 120 combinations — negligible cost
+    let bestTriplet = null;
+    let bestScore = -1;
+    const n = stripBlobs.length;
+
+    for (let i = 0; i < n - 2; i++) {
+      for (let j = i + 1; j < n - 1; j++) {
+        for (let k = j + 1; k < n; k++) {
+          const score = this._scoreTriplet(stripBlobs[i], stripBlobs[j], stripBlobs[k]);
+          if (score > bestScore) {
+            bestScore = score;
+            bestTriplet = [stripBlobs[i], stripBlobs[j], stripBlobs[k]];
+          }
+        }
+      }
+    }
+
+    // Reject if best triplet scores too low (likely no real device strips)
+    if (bestScore < 0.3 || !bestTriplet) {
+      console.warn(`Strip triplet rejected: best score ${bestScore.toFixed(3)}`);
+      return [];
+    }
+
+    // Sort by Y and assign IDs
+    const sorted = bestTriplet.sort((a, b) => a.y - b.y);
+    return sorted.map((s, i) => ({ ...s, id: stripIds[i] }));
+  }
+
+  /**
+   * Score a triplet of strip candidates (0-1).
+   * Higher score = more likely to be the 3 device strips.
+   * Weights: spacing consistency 40%, width consistency 25%, X alignment 20%, brightness consistency 15%
+   */
+  _scoreTriplet(a, b, c) {
+    // Sort by Y for consistent spacing calculation
+    const sorted = [a, b, c].sort((x, y) => x.y - y.y);
+    const [s0, s1, s2] = sorted;
+
+    // 1. Spacing consistency (40%): two gaps should be ~equal
+    const gap1 = s1.y - s0.y;
+    const gap2 = s2.y - s1.y;
+    if (gap1 <= 0 || gap2 <= 0) return 0; // degenerate
+    const spacingRatio = Math.min(gap1, gap2) / Math.max(gap1, gap2); // 0-1, 1=perfect
+    const spacingScore = spacingRatio;
+
+    // 2. Width consistency (25%): bboxW should be similar
+    const widths = [s0.bboxW_px, s1.bboxW_px, s2.bboxW_px];
+    const avgW = (widths[0] + widths[1] + widths[2]) / 3;
+    if (avgW <= 0) return 0;
+    const widthCV = Math.sqrt(widths.reduce((s, w) => s + (w - avgW) ** 2, 0) / 3) / avgW;
+    const widthScore = Math.max(0, 1 - widthCV * 2); // CV=0 → 1.0, CV=0.5 → 0
+
+    // 3. Vertical alignment (20%): X positions should be close
+    const xs = [s0.x, s1.x, s2.x];
+    const avgX = (xs[0] + xs[1] + xs[2]) / 3;
+    const xStd = Math.sqrt(xs.reduce((s, x) => s + (x - avgX) ** 2, 0) / 3);
+    const xTolerance = 0.10; // 10% horizontal drift tolerance for perspective
+    const alignScore = Math.max(0, 1 - xStd / xTolerance); // xStd=0 → 1.0, xStd=0.10 → 0
+
+    // 4. Brightness consistency (15%): similar brightness
+    const brights = [s0.brightness || 0, s1.brightness || 0, s2.brightness || 0];
+    const avgB = (brights[0] + brights[1] + brights[2]) / 3;
+    let brightScore = 1;
+    if (avgB > 0) {
+      const brightCV = Math.sqrt(brights.reduce((s, b) => s + (b - avgB) ** 2, 0) / 3) / avgB;
+      brightScore = Math.max(0, 1 - brightCV * 2);
+    }
+
+    return spacingScore * 0.40 + widthScore * 0.25 + alignScore * 0.20 + brightScore * 0.15;
   }
 
   /**

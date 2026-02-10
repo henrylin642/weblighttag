@@ -112,7 +112,7 @@ class BlueFilter {
     // Build sparse blue pixel index list for peak detector (fast NMS scanning)
     const bluePixels = [];
     for (let i = 0; i < outW * outH; i++) {
-      if (mask[i] > 0 || brightnessValues[i] > 200) {
+      if (mask[i] > 0) {
         bluePixels.push(i);
       }
     }
