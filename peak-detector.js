@@ -163,29 +163,29 @@ class PeakDetector {
   }
 
   /**
-   * 計算分數圖：brightness × 0.7 + blueDiff × 0.3
-   * 僅處理藍色遮罩內的像素（或極亮像素）以節省時間。
+   * v2.5.0: R 通道已是 brightnessGate × blueWeight 組合分數
+   * 直接用 mask[i] 作為分數，不再需要加權計算。
+   * G 通道編碼改為 blueDiff+0.5，舊公式會算錯，故簡化。
    */
   _computeScoreMap(mask, brightness, blueDiff, width, height, output, bluePixels) {
-    const bw = this.brightnessWeight;
-    const dw = this.blueDiffWeight;
-
     if (bluePixels && bluePixels.length > 0) {
       // 稀疏模式：僅遍歷已知的藍色像素
       for (let k = 0; k < bluePixels.length; k++) {
         const i = bluePixels[k];
-        const baseScore = brightness[i] * bw + blueDiff[i] * dw;
-        // Saturated LED floor: very bright pixels score at least 80% of brightness
-        // Prevents glow rings from outscoring bright LED centers with low blueDiff
-        output[i] = brightness[i] > 200 ? Math.max(baseScore, brightness[i] * 0.8) : baseScore;
+        // R 通道 = 組合分數，直接使用
+        // 極亮 LED 中心（brightness > 200）保底分數，防止低 blueWeight 壓低
+        output[i] = mask[i] > 200
+          ? Math.max(mask[i], brightness[i] * 0.8)
+          : mask[i];
       }
     } else {
       // 完整遍歷（回退）
       const size = width * height;
       for (let i = 0; i < size; i++) {
         if (mask[i] > 0) {
-          const baseScore = brightness[i] * bw + blueDiff[i] * dw;
-          output[i] = brightness[i] > 200 ? Math.max(baseScore, brightness[i] * 0.8) : baseScore;
+          output[i] = mask[i] > 200
+            ? Math.max(mask[i], brightness[i] * 0.8)
+            : mask[i];
         }
       }
     }

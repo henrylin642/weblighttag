@@ -13,7 +13,7 @@ class BlueFilter {
     this.fbTexture = null;
     this.fbWidth = 0;
     this.fbHeight = 0;
-    this.threshold = 0.12;
+    this.threshold = 0.30;
     this.brightnessFloor = 0.15;
     this.adaptiveEnabled = true;
     this._ready = false;
@@ -101,8 +101,8 @@ class BlueFilter {
     // v2.4.0: 亮度高通模式下使用連續灰階（不做二值化形態學處理）
     const mask = rawMask;
 
-    // 亮度高通模式：閾值 > 30 的像素才參與偵測（~12% of max）
-    const BRIGHT_PIXEL_THRESHOLD = 30;
+    // v2.5.0: 乘積濾波器 — R 通道 > 80 才參與偵測（brightnessGate × blueWeight）
+    const BRIGHT_PIXEL_THRESHOLD = 80;
     const bluePixels = [];
     for (let i = 0; i < outW * outH; i++) {
       if (mask[i] > BRIGHT_PIXEL_THRESHOLD) {
@@ -146,7 +146,7 @@ class BlueFilter {
   }
 
   setThreshold(value) {
-    this.threshold = Math.max(0.02, Math.min(0.50, value));
+    this.threshold = Math.max(0.05, Math.min(0.60, value));
   }
 
   setBrightnessFloor(value) {
@@ -259,37 +259,37 @@ class BlueFilter {
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   }
 
-  _updateAdaptiveThreshold(blueDiffValues, count) {
-    // Build histogram ONLY from pixels with meaningful blue signal (>5)
-    // Avoids letting the vast zero-valued background drag the percentile down
+  _updateAdaptiveThreshold(brightnessValues, count) {
+    // v2.5.0: 基於原始亮度（B 通道）建直方圖
+    // 找出環境亮度分布，自動調整 brightness gate 閾值
     const histogram = new Uint32Array(256);
     let signalCount = 0;
     for (let i = 0; i < count; i++) {
-      if (blueDiffValues[i] > 5) {
-        histogram[blueDiffValues[i]]++;
+      if (brightnessValues[i] > 30) {
+        histogram[brightnessValues[i]]++;
         signalCount++;
       }
     }
 
-    // Need minimum signal pixels to compute meaningful percentile
     if (signalCount < 50) return;
 
-    // 99th percentile of signal pixels (top 1% are likely LEDs/strips)
-    const targetCount = Math.floor(signalCount * 0.99);
+    // 97th percentile：top 3% 是 LED/亮光源
+    const targetCount = Math.floor(signalCount * 0.97);
     let cumulative = 0;
-    let percentile99 = 0;
-    for (let i = 6; i < 256; i++) {
+    let percentile97 = 0;
+    for (let i = 31; i < 256; i++) {
       cumulative += histogram[i];
       if (cumulative >= targetCount) {
-        percentile99 = i;
+        percentile97 = i;
         break;
       }
     }
 
-    // Threshold = 35% of the 99th percentile of signal pixels
-    const adaptiveThresh = (percentile99 / 255) * 0.35;
-    // Floor raised to 0.12, ceiling 0.20, EMA smoothing
-    this.threshold = this.threshold * 0.9 + Math.max(0.12, Math.min(0.20, adaptiveThresh)) * 0.1;
+    // 閾值 = 97th percentile 的 50%
+    const adaptiveThresh = (percentile97 / 255) * 0.50;
+    // 動態 floor = threshold/2, ceiling 0.45, EMA 平滑
+    const floor = this.threshold * 0.5;
+    this.threshold = this.threshold * 0.9 + Math.max(floor, Math.min(0.45, adaptiveThresh)) * 0.1;
   }
 
   /**
@@ -367,25 +367,31 @@ void main() {
   float g = color.g;
   float b = color.b;
 
-  // 亮度和藍色差異（保留供下游使用）
   float brightness = max(r, max(g, b));
   float blueDiff = b - (r + g) * 0.5;
 
-  // === 亮度高通濾波器 ===
-  // 抑制低於閾值的環境光，凸顯發光體
-  float suppressed = max(0.0, brightness - u_threshold);
-  float maxRange = max(0.001, 1.0 - u_threshold);
-  // 非線性增強：pow(x, 1.5) 讓亮點更突出，暗部更暗
-  float enhanced = pow(suppressed / maxRange, 1.5);
+  // === Stage 1: 亮度平滑門檻 ===
+  // smoothstep: 0 at threshold, 1 at threshold+0.15
+  // 排除暗背景，通過亮光源
+  float brightnessGate = smoothstep(u_threshold, u_threshold + 0.15, brightness);
 
-  // 藍色加權：略偏好藍色光源（+30% 上限）
-  // 幫助區分藍色 LED/燈條 vs 白色天花板燈
-  float blueBoost = clamp(blueDiff * 2.0, 0.0, 0.3);
-  float finalScore = clamp(enhanced + blueBoost, 0.0, 1.0);
+  // === Stage 2: 藍色選擇性 ===
+  // smoothstep(-0.05, 0.15, blueDiff):
+  //   blueDiff = -0.10 → 0.0  （暖白天花板燈：拒絕）
+  //   blueDiff = -0.05 → 0.0  （中性暖光：拒絕）
+  //   blueDiff = -0.02 → 0.09 （LED 中心近白：弱通過）
+  //   blueDiff =  0.00 → 0.25 （中性：通過）
+  //   blueDiff = +0.05 → 0.625（藍色光暈：通過）
+  //   blueDiff = +0.15 → 1.0  （強藍：完全通過）
+  float blueWeight = smoothstep(-0.05, 0.15, blueDiff);
 
-  // R = 連續亮度分數 (0-1)
-  // G = blueDiff (0-1) — 保留供診斷
+  // === Stage 3: 乘法組合 ===
+  // 必須同時亮且藍才通過 — 天花板燈（亮但不藍）= 0
+  float finalScore = brightnessGate * blueWeight;
+
+  // R = 組合分數 brightnessGate×blueWeight (0-1)
+  // G = blueDiff+0.5 映射到 0-1（保留正負值供診斷）
   // B = 原始亮度 (0-1)
-  gl_FragColor = vec4(finalScore, clamp(blueDiff, 0.0, 1.0), brightness, 1.0);
+  gl_FragColor = vec4(finalScore, clamp(blueDiff + 0.5, 0.0, 1.0), brightness, 1.0);
 }
 `;

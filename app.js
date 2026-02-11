@@ -8,7 +8,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '2.4.0';
+  const APP_VERSION = '2.5.0';
 
   // --- State ---
 
@@ -174,24 +174,67 @@
         }
 
         // === Step B: 手動對焦 + 曝光 + 白平衡 ===
-        // 使用 manual focusMode + focusDistance 讓用戶控制焦距
         if (caps.focusMode) {
           try {
             await track.applyConstraints({ focusMode: 'manual' });
+            console.log('focusMode set to manual');
+            // 關鍵：500ms 延遲讓 Android HAL 完成模式切換
+            await new Promise(r => setTimeout(r, 500));
           } catch (e) {
             console.warn('focusMode manual failed:', e.message);
-            // fallback to continuous
             try { await track.applyConstraints({ focusMode: 'continuous' }); } catch (e2) {}
           }
         }
+
+        // 讀取設備 focusDistance 實際範圍，動態更新滑桿
+        let focusMin = 0, focusMax = 10, focusStep = 0.01;
         if (caps.focusDistance) {
+          focusMin = caps.focusDistance.min || 0;
+          focusMax = caps.focusDistance.max || 10;
+          focusStep = caps.focusDistance.step || 0.01;
+          console.log(`focusDistance range: ${focusMin} - ${focusMax}, step: ${focusStep}`);
+
+          // 動態更新滑桿 range
+          cfgFocus.min = focusMin;
+          cfgFocus.max = focusMax;
+          cfgFocus.step = focusStep;
+
+          // Clamp 初始值到設備實際範圍
+          const initDist = Math.max(focusMin, Math.min(focusMax,
+            parseFloat(cfgFocus.value) || 0.5));
+          cfgFocus.value = initDist;
+          valFocus.textContent = initDist.toFixed(2) + 'm';
+
           try {
-            const initDist = parseFloat(cfgFocus.value) || 0.5;
             await track.applyConstraints({ focusDistance: initDist });
+            console.log(`focusDistance set to: ${initDist}`);
+
+            // Readback 驗證
+            await new Promise(r => setTimeout(r, 200));
+            const verifySettings = track.getSettings();
+            const actualDist = verifySettings.focusDistance;
+            console.log(`focusDistance readback: ${actualDist}`);
+
+            if (actualDist !== undefined && actualDist !== null) {
+              state.focusDistance = actualDist;
+              cfgFocus.value = actualDist;
+              valFocus.textContent = actualDist.toFixed(2) + 'm';
+            } else {
+              state.focusDistance = initDist;
+            }
           } catch (e) {
             console.warn('focusDistance failed:', e.message);
           }
         }
+        state.focusRange = caps.focusDistance
+          ? `${focusMin.toFixed(1)}-${focusMax.toFixed(1)}`
+          : 'N/A';
+        // 更新 UI 顯示設備焦距範圍
+        const focusRangeEl = document.getElementById('focus-range');
+        if (focusRangeEl) focusRangeEl.textContent = caps.focusDistance
+          ? `[${focusMin.toFixed(1)}-${focusMax.toFixed(1)}]`
+          : '[不支援]';
+
         if (caps.exposureMode) {
           try { await track.applyConstraints({ exposureMode: 'continuous' }); } catch (e) {}
         }
@@ -203,8 +246,8 @@
         await new Promise(r => setTimeout(r, 300));
         const settings = track.getSettings();
         state.focusStatus = settings.focusMode || (caps.focusMode ? 'requested' : 'unsupported');
-        state.focusDistance = settings.focusDistance || null;
-        console.log(`focusMode actual: ${state.focusStatus}, focusDistance: ${state.focusDistance}, exposure: ${settings.exposureMode || 'N/A'}`);
+        if (!state.focusDistance) state.focusDistance = settings.focusDistance || null;
+        console.log(`focusMode: ${state.focusStatus}, focusDistance: ${state.focusDistance}, range: ${state.focusRange}, exposure: ${settings.exposureMode || 'N/A'}`);
       }
 
       state.resolution = `${vw}x${vh}`;
@@ -769,6 +812,8 @@
       version: APP_VERSION,
       // Debug info for mobile HUD
       focusStatus: state.focusStatus || 'unknown',
+      focusDistance: state.focusDistance || null,
+      focusRange: state.focusRange || 'N/A',
       downscale: state.lastDownscale || '?',
       maskPercent: state.lastMaskPercent || 0,
       peakCount: state.lastPeakCount || 0,
@@ -943,22 +988,24 @@
 
     // Reset detection parameters to defaults
     btnResetParams.addEventListener('click', () => {
-      cfgThreshold.value = 0.12;   valThreshold.textContent = '0.12';
+      cfgThreshold.value = 0.30;   valThreshold.textContent = '0.30';
       cfgBrightness.value = 0.15;  valBrightness.textContent = '0.15';
       cfgAdaptive.checked = true;
-      cfgFocus.value = 0.5;        valFocus.textContent = '0.50m';
 
       if (blueFilter) {
-        blueFilter.setThreshold(0.12);
+        blueFilter.setThreshold(0.30);
         blueFilter.setBrightnessFloor(0.15);
         blueFilter.adaptiveEnabled = true;
       }
       state.adaptiveThreshold = true;
 
-      // Reset focus distance
+      // Reset focus distance to slider midpoint
       const track = state.stream?.getVideoTracks()[0];
       if (track) {
-        track.applyConstraints({ focusDistance: 0.5 }).catch(() => {});
+        const mid = (parseFloat(cfgFocus.min) + parseFloat(cfgFocus.max)) / 2;
+        cfgFocus.value = mid;
+        valFocus.textContent = mid.toFixed(2) + 'm';
+        track.applyConstraints({ focusDistance: mid }).catch(() => {});
       }
     });
 
@@ -1025,7 +1072,7 @@
       });
     });
 
-    // Focus distance slider
+    // Focus distance slider with readback verification
     cfgFocus.addEventListener('input', async () => {
       const dist = parseFloat(cfgFocus.value);
       valFocus.textContent = dist.toFixed(2) + 'm';
@@ -1033,7 +1080,16 @@
       if (track) {
         try {
           await track.applyConstraints({ focusDistance: dist });
-          state.focusDistance = dist;
+          // Readback 驗證實際值
+          await new Promise(r => setTimeout(r, 100));
+          const settings = track.getSettings();
+          const actual = settings.focusDistance;
+          if (actual !== undefined && actual !== null) {
+            state.focusDistance = actual;
+            valFocus.textContent = actual.toFixed(2) + 'm';
+          } else {
+            state.focusDistance = dist;
+          }
         } catch (e) {
           console.warn('focusDistance failed:', e.message);
         }

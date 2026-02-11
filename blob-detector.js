@@ -122,10 +122,10 @@ class BlobDetector {
    * @returns {Array<Blob>} Detected blobs with centroid, area, bbox, brightness
    */
   detect(mask, width, height, blueDiffValues, downscale = 1, brightnessValues = null) {
-    // v2.4.0: mask 可能是連續灰階，需要二值化才能做 connected component
+    // v2.5.0: mask 是連續灰階（brightnessGate×blueWeight），二值化門檻提升至 120
     const binaryMask = new Uint8Array(mask.length);
     for (let i = 0; i < mask.length; i++) {
-      binaryMask[i] = mask[i] > 80 ? 255 : 0;
+      binaryMask[i] = mask[i] > 120 ? 255 : 0;
     }
 
     // Connected-component labeling
@@ -146,13 +146,13 @@ class BlobDetector {
       const aspect = Math.max(bboxW, bboxH) / Math.max(1, Math.min(bboxW, bboxH));
       if (aspect > this.maxAspectRatio) continue;
 
-      // Minimum average brightness filter: reject dim noise blobs
-      if (blueDiffValues) {
-        const avgBlueDiff = s.sumBrightness / s.area;
-        // Real LEDs have blueDiff typically 30-200; noise is 1-8
-        // But saturated LED centers may have low blueDiff, so also check real brightness
-        const avgRealBright = brightnessValues ? (s.sumRealBrightness / s.area) : 0;
-        if (avgBlueDiff < 10 && avgRealBright < 200) continue;
+      // Minimum brightness filter: reject dim noise blobs
+      // v2.5.0: G 通道編碼改為 blueDiff+0.5，128=中性，>128=藍色
+      // R 通道已含 brightnessGate×blueWeight，通過二值化的 blob 已有基本品質
+      // 僅用 realBrightness 做最低門檻
+      if (brightnessValues) {
+        const avgRealBright = s.sumRealBrightness / s.area;
+        if (avgRealBright < 100) continue;
       }
 
       // Compactness filter: real LEDs should be roughly circular
@@ -210,10 +210,10 @@ class BlobDetector {
    * @returns {Array<StripBlob>} Detected strip blobs, sorted by Y position (top to bottom)
    */
   detectStrips(mask, width, height, blueDiffValues, downscale = 1, brightnessValues = null) {
-    // v2.4.0: mask 可能是連續灰階，需要二值化才能做 connected component
+    // v2.5.0: 二值化門檻提升至 120（配合乘積濾波器）
     const binaryMask = new Uint8Array(mask.length);
     for (let i = 0; i < mask.length; i++) {
-      binaryMask[i] = mask[i] > 80 ? 255 : 0;
+      binaryMask[i] = mask[i] > 120 ? 255 : 0;
     }
 
     // Connected-component labeling
