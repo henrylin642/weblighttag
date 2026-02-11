@@ -328,9 +328,9 @@ class FeedbackManager {
       tracking: 'rgba(50, 220, 100, 0.9)'
     };
 
-    // Background strip for status
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-    ctx.fillRect(0, 0, w, 50);
+    // Background strip for status (covers all 4 HUD lines: status, res/fps, debug, version)
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+    ctx.fillRect(0, 0, w, 75);
 
     ctx.fillStyle = statusColors[this.state] || '#fff';
     ctx.fillText(statusMessages[this.state] || '', padding, 20);
