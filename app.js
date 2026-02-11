@@ -8,7 +8,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '2.3.3';
+  const APP_VERSION = '2.3.4';
 
   // --- State ---
 
@@ -150,49 +150,61 @@
       let vh = video.videoHeight;
       console.log(`Camera initial: ${vw}x${vh}`);
 
-      // 合併解析度 + 對焦 + 曝光 + 白平衡為單一 applyConstraints 呼叫
-      // 分開呼叫會導致 Android Chrome 在解析度變更時重置 focusMode
+      // 兩步式約束設定：解析度和相機模式分開呼叫
+      // v2.3.3 合併所有約束導致 Android Chrome reject 整個呼叫（焦:failed）
+      // 原因：focusMode/exposureMode/whiteBalanceMode 來自 Image Capture API 擴展，
+      //       與基礎 width/height 約束混合會觸發 OverconstrainedError
       const track = state.stream.getVideoTracks()[0];
       if (track) {
         const caps = track.getCapabilities ? track.getCapabilities() : {};
+
+        // === Step A: 解析度升級 ===
         try {
           const maxW = caps.width ? caps.width.max : 1920;
           const maxH = caps.height ? caps.height.max : 1080;
           const targetW = Math.min(maxW, 1920);
           const targetH = Math.min(maxH, 1080);
 
-          const combined = {
+          await track.applyConstraints({
             width: { ideal: targetW },
             height: { ideal: targetH }
-          };
-          if (caps.focusMode) {
-            combined.focusMode = 'continuous';
-          }
-          if (caps.exposureMode) {
-            combined.exposureMode = 'continuous';
-          }
-          if (caps.whiteBalanceMode) {
-            combined.whiteBalanceMode = 'continuous';
-          }
-
-          await track.applyConstraints(combined);
-
-          // 等待硬體穩定（合併約束需較長時間）
-          await new Promise(r => setTimeout(r, 500));
-
+          });
+          await new Promise(r => setTimeout(r, 200));
           vw = video.videoWidth;
           vh = video.videoHeight;
           console.log(`Camera upgraded: ${vw}x${vh} (max: ${maxW}x${maxH})`);
-
-          // 透過 getSettings() 驗證實際對焦狀態
-          const settings = track.getSettings();
-          state.focusStatus = settings.focusMode || (caps.focusMode ? 'requested' : 'unsupported');
-          console.log(`focusMode actual: ${state.focusStatus}, exposure: ${settings.exposureMode || 'N/A'}`);
         } catch (e) {
-          console.warn('applyConstraints failed:', e);
-          if (e.constraint) console.warn('Failed constraint:', e.constraint);
-          state.focusStatus = 'failed';
+          console.warn('Resolution upgrade failed:', e);
         }
+
+        // === Step B: 相機模式（對焦+曝光+白平衡）— 立即設定，不加延遲 ===
+        const modeConstraints = {};
+        if (caps.focusMode) modeConstraints.focusMode = 'continuous';
+        if (caps.exposureMode) modeConstraints.exposureMode = 'continuous';
+        if (caps.whiteBalanceMode) modeConstraints.whiteBalanceMode = 'continuous';
+
+        if (Object.keys(modeConstraints).length > 0) {
+          try {
+            await track.applyConstraints(modeConstraints);
+          } catch (e) {
+            console.warn('Camera mode constraints failed:', e);
+            if (e.constraint) console.warn('Failed constraint:', e.constraint);
+            // 合併失敗時逐一嘗試每個屬性
+            for (const [key, val] of Object.entries(modeConstraints)) {
+              try {
+                await track.applyConstraints({ [key]: val });
+              } catch (e2) {
+                console.warn(`${key} failed:`, e2.message);
+              }
+            }
+          }
+        }
+
+        // 等待硬體穩定後驗證實際狀態
+        await new Promise(r => setTimeout(r, 300));
+        const settings = track.getSettings();
+        state.focusStatus = settings.focusMode || (caps.focusMode ? 'requested' : 'unsupported');
+        console.log(`focusMode actual: ${state.focusStatus}, exposure: ${settings.exposureMode || 'N/A'}`);
       }
 
       state.resolution = `${vw}x${vh}`;
