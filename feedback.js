@@ -439,10 +439,9 @@ class FeedbackManager {
       const ds = data.downscale || '?';
       const maskPct = (data.maskPercent || 0).toFixed(1);
       const peakInfo = `${data.peakCount || 0}/${data.maxCandidates || 20}`;
-      // v2.5.0: 顯示 focusDistance 值和設備範圍
-      const fd = data.focusDistance != null ? data.focusDistance.toFixed(2) : '?';
-      const fr = data.focusRange || '';
-      ctx.fillText(`焦:${data.focusStatus} ${fd} [${fr}] | DS:${ds} | 罩:${maskPct}% | 峰:${peakInfo}`, padding, 54);
+      // v2.5.1: tap-to-focus 狀態
+      const tap = data.tapFocus === 'yes' ? '👆' : '';
+      ctx.fillText(`焦:${data.focusStatus}${tap} | DS:${ds} | 罩:${maskPct}% | 峰:${peakInfo}`, padding, 54);
     }
 
     if (data.version) {

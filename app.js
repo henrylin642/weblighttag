@@ -65,9 +65,8 @@
   const valThreshold = $('val-threshold');
   const valBrightness = $('val-brightness');
 
-  // Focus control
-  const cfgFocus = $('cfg-focus');
-  const valFocus = $('val-focus');
+  // Tap-to-focus state
+  let focusRingTimer = null;
 
   const cfgFx = $('cfg-fx');
   const cfgFy = $('cfg-fy');
@@ -173,68 +172,19 @@
           console.warn('Resolution upgrade failed:', e);
         }
 
-        // === Step B: 手動對焦 + 曝光 + 白平衡 ===
+        // === Step B: 連續對焦 + 曝光 + 白平衡 ===
+        // v2.5.1: 放棄 manual focus（focusDistance 在多數 Android 裝置無效）
+        // 改用 continuous + pointsOfInterest tap-to-focus
         if (caps.focusMode) {
           try {
-            await track.applyConstraints({ focusMode: 'manual' });
-            console.log('focusMode set to manual');
-            // 關鍵：500ms 延遲讓 Android HAL 完成模式切換
-            await new Promise(r => setTimeout(r, 500));
+            await track.applyConstraints({ focusMode: 'continuous' });
           } catch (e) {
-            console.warn('focusMode manual failed:', e.message);
-            try { await track.applyConstraints({ focusMode: 'continuous' }); } catch (e2) {}
+            console.warn('focusMode continuous failed:', e.message);
           }
         }
-
-        // 讀取設備 focusDistance 實際範圍，動態更新滑桿
-        let focusMin = 0, focusMax = 10, focusStep = 0.01;
-        if (caps.focusDistance) {
-          focusMin = caps.focusDistance.min || 0;
-          focusMax = caps.focusDistance.max || 10;
-          focusStep = caps.focusDistance.step || 0.01;
-          console.log(`focusDistance range: ${focusMin} - ${focusMax}, step: ${focusStep}`);
-
-          // 動態更新滑桿 range
-          cfgFocus.min = focusMin;
-          cfgFocus.max = focusMax;
-          cfgFocus.step = focusStep;
-
-          // 初始值 = focusMin（通常 0 = 最遠/無窮遠）
-          // Android Chrome 的 focusDistance 單位可能是 diopters（1/m），非公尺
-          // 0=遠, 大值=近，不假設單位，讓用戶自行調整
-          const initDist = focusMin;
-          cfgFocus.value = initDist;
-          valFocus.textContent = initDist.toFixed(2);
-
-          try {
-            await track.applyConstraints({ focusDistance: initDist });
-            console.log(`focusDistance set to: ${initDist}`);
-
-            // Readback 驗證
-            await new Promise(r => setTimeout(r, 200));
-            const verifySettings = track.getSettings();
-            const actualDist = verifySettings.focusDistance;
-            console.log(`focusDistance readback: ${actualDist}`);
-
-            if (actualDist !== undefined && actualDist !== null) {
-              state.focusDistance = actualDist;
-              cfgFocus.value = actualDist;
-              valFocus.textContent = actualDist.toFixed(2);
-            } else {
-              state.focusDistance = initDist;
-            }
-          } catch (e) {
-            console.warn('focusDistance failed:', e.message);
-          }
-        }
-        state.focusRange = caps.focusDistance
-          ? `${focusMin.toFixed(1)}-${focusMax.toFixed(1)}`
-          : 'N/A';
-        // 更新 UI 顯示設備焦距範圍
-        const focusRangeEl = document.getElementById('focus-range');
-        if (focusRangeEl) focusRangeEl.textContent = caps.focusDistance
-          ? `[${focusMin.toFixed(1)}-${focusMax.toFixed(1)}]`
-          : '[不支援]';
+        // 記錄 pointsOfInterest 支援狀態
+        state.tapFocusSupported = !!caps.pointsOfInterest;
+        console.log(`pointsOfInterest supported: ${state.tapFocusSupported}`);
 
         if (caps.exposureMode) {
           try { await track.applyConstraints({ exposureMode: 'continuous' }); } catch (e) {}
@@ -247,8 +197,7 @@
         await new Promise(r => setTimeout(r, 300));
         const settings = track.getSettings();
         state.focusStatus = settings.focusMode || (caps.focusMode ? 'requested' : 'unsupported');
-        if (!state.focusDistance) state.focusDistance = settings.focusDistance || null;
-        console.log(`focusMode: ${state.focusStatus}, focusDistance: ${state.focusDistance}, range: ${state.focusRange}, exposure: ${settings.exposureMode || 'N/A'}`);
+        console.log(`focusMode: ${state.focusStatus}, tapFocus: ${state.tapFocusSupported}, exposure: ${settings.exposureMode || 'N/A'}`);
       }
 
       state.resolution = `${vw}x${vh}`;
@@ -443,6 +392,36 @@
       drawMaskFullscreen(filterResult);
     } else {
       feedback.draw(overlayCtx, displayW, displayH, getDrawData());
+
+      // Tap-to-focus 圓圈動畫
+      if (state.focusRing) {
+        const ring = state.focusRing;
+        const elapsed = Date.now() - ring.t;
+        const progress = Math.min(1, elapsed / 600);
+        const radius = 30 + (1 - progress) * 20;
+        const alpha = elapsed < 600 ? 1 : Math.max(0, 1 - (elapsed - 600) / 900);
+
+        // 縮放到 canvas 座標
+        const rect = overlay.getBoundingClientRect();
+        const sx = overlay.width / rect.width;
+        const sy = overlay.height / rect.height;
+
+        overlayCtx.save();
+        overlayCtx.strokeStyle = `rgba(100, 200, 255, ${alpha})`;
+        overlayCtx.lineWidth = 2;
+        overlayCtx.beginPath();
+        overlayCtx.arc(ring.x * sx, ring.y * sy, radius * sx, 0, Math.PI * 2);
+        overlayCtx.stroke();
+        // 十字線
+        const cr = 8 * sx;
+        overlayCtx.beginPath();
+        overlayCtx.moveTo(ring.x * sx - cr, ring.y * sy);
+        overlayCtx.lineTo(ring.x * sx + cr, ring.y * sy);
+        overlayCtx.moveTo(ring.x * sx, ring.y * sy - cr);
+        overlayCtx.lineTo(ring.x * sx, ring.y * sy + cr);
+        overlayCtx.stroke();
+        overlayCtx.restore();
+      }
 
       // Draw mask overlay AFTER feedback (so it's not cleared)
       if (state.maskMode === 'overlay' && filterResult) {
@@ -813,8 +792,7 @@
       version: APP_VERSION,
       // Debug info for mobile HUD
       focusStatus: state.focusStatus || 'unknown',
-      focusDistance: state.focusDistance || null,
-      focusRange: state.focusRange || 'N/A',
+      tapFocus: state.tapFocusSupported ? 'yes' : 'no',
       downscale: state.lastDownscale || '?',
       maskPercent: state.lastMaskPercent || 0,
       peakCount: state.lastPeakCount || 0,
@@ -999,15 +977,6 @@
         blueFilter.adaptiveEnabled = true;
       }
       state.adaptiveThreshold = true;
-
-      // Reset focus distance to min（最遠對焦）
-      const track = state.stream?.getVideoTracks()[0];
-      if (track) {
-        const minVal = parseFloat(cfgFocus.min) || 0;
-        cfgFocus.value = minVal;
-        valFocus.textContent = minVal.toFixed(2);
-        track.applyConstraints({ focusDistance: minVal }).catch(() => {});
-      }
     });
 
     // Settings drawer toggle
@@ -1073,29 +1042,51 @@
       });
     });
 
-    // Focus distance slider with readback verification
-    // 單位可能是 diopters（0=遠, 大值=近），不假設為公尺
-    cfgFocus.addEventListener('input', async () => {
-      const dist = parseFloat(cfgFocus.value);
-      valFocus.textContent = dist.toFixed(2);
+    // === Tap-to-focus ===
+    // 點擊 overlay canvas → pointsOfInterest 對焦到該區域
+    overlay.addEventListener('click', async (e) => {
+      if (!state.running) return;
       const track = state.stream?.getVideoTracks()[0];
-      if (track) {
-        try {
-          await track.applyConstraints({ focusDistance: dist });
-          // Readback 驗證實際值
-          await new Promise(r => setTimeout(r, 100));
-          const settings = track.getSettings();
-          const actual = settings.focusDistance;
-          if (actual !== undefined && actual !== null) {
-            state.focusDistance = actual;
-            valFocus.textContent = actual.toFixed(2);
-          } else {
-            state.focusDistance = dist;
-          }
-        } catch (e) {
-          console.warn('focusDistance failed:', e.message);
-        }
+      if (!track) return;
+
+      // 計算點擊位置的正規化座標 (0-1)
+      const rect = overlay.getBoundingClientRect();
+      const nx = (e.clientX - rect.left) / rect.width;
+      const ny = (e.clientY - rect.top) / rect.height;
+
+      // 顯示對焦圓圈動畫
+      state.focusRing = { x: e.clientX - rect.left, y: e.clientY - rect.top, t: Date.now() };
+      if (focusRingTimer) clearTimeout(focusRingTimer);
+      focusRingTimer = setTimeout(() => { state.focusRing = null; }, 1500);
+
+      // 嘗試 pointsOfInterest + single-shot 對焦
+      try {
+        const constraints = { advanced: [{ pointsOfInterest: [{ x: nx, y: ny }] }] };
+        await track.applyConstraints(constraints);
+        console.log(`tap-to-focus at (${nx.toFixed(2)}, ${ny.toFixed(2)})`);
+      } catch (e1) {
+        console.warn('pointsOfInterest failed:', e1.message);
       }
+
+      // 嘗試 single-shot 對焦模式（觸發一次自動對焦）
+      try {
+        await track.applyConstraints({ focusMode: 'single-shot' });
+        // 2 秒後恢復 continuous
+        setTimeout(async () => {
+          try {
+            await track.applyConstraints({ focusMode: 'continuous' });
+          } catch (e2) {}
+        }, 2000);
+      } catch (e3) {
+        console.warn('single-shot focus failed:', e3.message);
+      }
+
+      // 更新 HUD
+      state.focusStatus = 'focusing...';
+      setTimeout(() => {
+        const s = track.getSettings();
+        state.focusStatus = s.focusMode || 'continuous';
+      }, 2500);
     });
 
     // Camera intrinsics
