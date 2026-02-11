@@ -8,7 +8,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '2.3.4';
+  const APP_VERSION = '2.4.0';
 
   // --- State ---
 
@@ -65,13 +65,9 @@
   const valThreshold = $('val-threshold');
   const valBrightness = $('val-brightness');
 
-  // HSV controls
-  const cfgHue = $('cfg-hue');
-  const cfgHueRange = $('cfg-hue-range');
-  const cfgSat = $('cfg-sat');
-  const valHue = $('val-hue');
-  const valHueRange = $('val-hue-range');
-  const valSat = $('val-sat');
+  // Focus control
+  const cfgFocus = $('cfg-focus');
+  const valFocus = $('val-focus');
 
   const cfgFx = $('cfg-fx');
   const cfgFy = $('cfg-fy');
@@ -177,34 +173,38 @@
           console.warn('Resolution upgrade failed:', e);
         }
 
-        // === Step B: 相機模式（對焦+曝光+白平衡）— 立即設定，不加延遲 ===
-        const modeConstraints = {};
-        if (caps.focusMode) modeConstraints.focusMode = 'continuous';
-        if (caps.exposureMode) modeConstraints.exposureMode = 'continuous';
-        if (caps.whiteBalanceMode) modeConstraints.whiteBalanceMode = 'continuous';
-
-        if (Object.keys(modeConstraints).length > 0) {
+        // === Step B: 手動對焦 + 曝光 + 白平衡 ===
+        // 使用 manual focusMode + focusDistance 讓用戶控制焦距
+        if (caps.focusMode) {
           try {
-            await track.applyConstraints(modeConstraints);
+            await track.applyConstraints({ focusMode: 'manual' });
           } catch (e) {
-            console.warn('Camera mode constraints failed:', e);
-            if (e.constraint) console.warn('Failed constraint:', e.constraint);
-            // 合併失敗時逐一嘗試每個屬性
-            for (const [key, val] of Object.entries(modeConstraints)) {
-              try {
-                await track.applyConstraints({ [key]: val });
-              } catch (e2) {
-                console.warn(`${key} failed:`, e2.message);
-              }
-            }
+            console.warn('focusMode manual failed:', e.message);
+            // fallback to continuous
+            try { await track.applyConstraints({ focusMode: 'continuous' }); } catch (e2) {}
           }
+        }
+        if (caps.focusDistance) {
+          try {
+            const initDist = parseFloat(cfgFocus.value) || 0.5;
+            await track.applyConstraints({ focusDistance: initDist });
+          } catch (e) {
+            console.warn('focusDistance failed:', e.message);
+          }
+        }
+        if (caps.exposureMode) {
+          try { await track.applyConstraints({ exposureMode: 'continuous' }); } catch (e) {}
+        }
+        if (caps.whiteBalanceMode) {
+          try { await track.applyConstraints({ whiteBalanceMode: 'continuous' }); } catch (e) {}
         }
 
         // 等待硬體穩定後驗證實際狀態
         await new Promise(r => setTimeout(r, 300));
         const settings = track.getSettings();
         state.focusStatus = settings.focusMode || (caps.focusMode ? 'requested' : 'unsupported');
-        console.log(`focusMode actual: ${state.focusStatus}, exposure: ${settings.exposureMode || 'N/A'}`);
+        state.focusDistance = settings.focusDistance || null;
+        console.log(`focusMode actual: ${state.focusStatus}, focusDistance: ${state.focusDistance}, exposure: ${settings.exposureMode || 'N/A'}`);
       }
 
       state.resolution = `${vw}x${vh}`;
@@ -837,12 +837,13 @@
     const imgData = tmpCtx.createImageData(width, height);
 
     for (let i = 0; i < width * height; i++) {
-      const val = mask[i];
-      const strength = blueDiffValues ? blueDiffValues[i] : val;
-      imgData.data[i * 4] = 0;                    // R
-      imgData.data[i * 4 + 1] = 0;                // G
-      imgData.data[i * 4 + 2] = val > 0 ? 255 : 0; // B
-      imgData.data[i * 4 + 3] = val > 0 ? Math.min(200, strength + 80) : 0; // A
+      const v = mask[i];
+      // Grayscale rendering for continuous mask
+      const alpha = v > 10 ? Math.min(200, v + 80) : 0;
+      imgData.data[i * 4] = v * 0.3;     // R (slight tint)
+      imgData.data[i * 4 + 1] = v * 0.3; // G (slight tint)
+      imgData.data[i * 4 + 2] = v;       // B (full brightness for blue tint)
+      imgData.data[i * 4 + 3] = alpha;   // A
     }
 
     tmpCtx.putImageData(imgData, 0, 0);
@@ -875,17 +876,11 @@
     const imgData = tmpCtx.createImageData(width, height);
 
     for (let i = 0; i < width * height; i++) {
-      const val = mask[i];
-      const strength = blueDiffValues ? blueDiffValues[i] : 255;
-      if (val > 0) {
-        // Blue bright spots
-        imgData.data[i * 4] = Math.min(255, strength);       // R (slight)
-        imgData.data[i * 4 + 1] = Math.min(255, strength);   // G (slight)
-        imgData.data[i * 4 + 2] = 255;                        // B (full)
-        imgData.data[i * 4 + 3] = 255;                        // A
-      } else {
-        imgData.data[i * 4 + 3] = 0; // Transparent (show black bg)
-      }
+      const v = mask[i];
+      imgData.data[i * 4] = v;     // R
+      imgData.data[i * 4 + 1] = v; // G
+      imgData.data[i * 4 + 2] = v; // B
+      imgData.data[i * 4 + 3] = v > 10 ? 255 : 0; // A
     }
 
     tmpCtx.putImageData(imgData, 0, 0);
@@ -948,22 +943,23 @@
 
     // Reset detection parameters to defaults
     btnResetParams.addEventListener('click', () => {
-      cfgSat.value = 0.25;    valSat.textContent = '0.25';
-      cfgHue.value = 227;     valHue.textContent = '227°';
-      cfgHueRange.value = 30; valHueRange.textContent = '±30°';
       cfgThreshold.value = 0.12;   valThreshold.textContent = '0.12';
       cfgBrightness.value = 0.15;  valBrightness.textContent = '0.15';
       cfgAdaptive.checked = true;
+      cfgFocus.value = 0.5;        valFocus.textContent = '0.50m';
 
       if (blueFilter) {
-        blueFilter.setSatMin(0.25);
-        blueFilter.setHueCenter(227 / 360);
-        blueFilter.setHueRange(30 / 360);
         blueFilter.setThreshold(0.12);
         blueFilter.setBrightnessFloor(0.15);
         blueFilter.adaptiveEnabled = true;
       }
       state.adaptiveThreshold = true;
+
+      // Reset focus distance
+      const track = state.stream?.getVideoTracks()[0];
+      if (track) {
+        track.applyConstraints({ focusDistance: 0.5 }).catch(() => {});
+      }
     });
 
     // Settings drawer toggle
@@ -1029,25 +1025,19 @@
       });
     });
 
-    // HSV Hue Center
-    cfgHue.addEventListener('input', () => {
-      const deg = parseFloat(cfgHue.value);
-      valHue.textContent = deg + '°';
-      if (blueFilter) blueFilter.setHueCenter(deg / 360);
-    });
-
-    // HSV Hue Range
-    cfgHueRange.addEventListener('input', () => {
-      const deg = parseFloat(cfgHueRange.value);
-      valHueRange.textContent = '±' + deg + '°';
-      if (blueFilter) blueFilter.setHueRange(deg / 360);
-    });
-
-    // HSV Saturation Min
-    cfgSat.addEventListener('input', () => {
-      const val = parseFloat(cfgSat.value);
-      valSat.textContent = val.toFixed(2);
-      if (blueFilter) blueFilter.setSatMin(val);
+    // Focus distance slider
+    cfgFocus.addEventListener('input', async () => {
+      const dist = parseFloat(cfgFocus.value);
+      valFocus.textContent = dist.toFixed(2) + 'm';
+      const track = state.stream?.getVideoTracks()[0];
+      if (track) {
+        try {
+          await track.applyConstraints({ focusDistance: dist });
+          state.focusDistance = dist;
+        } catch (e) {
+          console.warn('focusDistance failed:', e.message);
+        }
+      }
     });
 
     // Camera intrinsics

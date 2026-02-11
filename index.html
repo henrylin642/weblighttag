@@ -25,7 +25,7 @@
           <h1>WebTag 6DoF Locator</h1>
           <p>瀏覽器端 5-LED 定位系統</p>
           <button id="btn-start" class="btn-primary">啟動相機</button>
-          <p class="hint" id="version-hint">v2.3.4 - 無需 OpenCV</p>
+          <p class="hint" id="version-hint">v2.4.0 - 無需 OpenCV</p>
         </div>
       </div>
 
@@ -85,22 +85,10 @@
             </div>
           </div>
 
-          <!-- HSV Hue Center -->
+          <!-- 焦距控制 -->
           <div class="setting-group">
-            <label>色相中心: <span id="val-hue">227°</span></label>
-            <input id="cfg-hue" type="range" min="0" max="360" step="1" value="227" />
-          </div>
-
-          <!-- HSV Hue Range -->
-          <div class="setting-group">
-            <label>色相範圍: <span id="val-hue-range">±30°</span></label>
-            <input id="cfg-hue-range" type="range" min="5" max="180" step="1" value="30" />
-          </div>
-
-          <!-- HSV Saturation Min -->
-          <div class="setting-group">
-            <label>飽和度門檻: <span id="val-sat">0.25</span></label>
-            <input id="cfg-sat" type="range" min="0" max="0.80" step="0.01" value="0.25" />
+            <label>手動焦距: <span id="val-focus">0.50m</span></label>
+            <input id="cfg-focus" type="range" min="0.1" max="5.0" step="0.05" value="0.5" />
           </div>
 
           <!-- Camera intrinsics (advanced) -->

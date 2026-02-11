@@ -17,11 +17,6 @@ class BlueFilter {
     this.brightnessFloor = 0.15;
     this.adaptiveEnabled = true;
     this._ready = false;
-
-    // HSV filter parameters
-    this.hueCenter = 0.63;    // Blue hue center (0-1, ~227°/360°)
-    this.hueRange = 0.083;    // Hue tolerance (±0.083 = ±30°, covers ~197°-257°)
-    this.satMin = 0.25;       // Minimum saturation (rejects desaturated environmental blue)
   }
 
   init() {
@@ -74,9 +69,6 @@ class BlueFilter {
     gl.uniform1i(this.uVideo, 0);
     gl.uniform1f(this.uThreshold, this.threshold);
     gl.uniform1f(this.uBrightness, this.brightnessFloor);
-    gl.uniform1f(this.uHueCenter, this.hueCenter);
-    gl.uniform1f(this.uHueRange, this.hueRange);
-    gl.uniform1f(this.uSatMin, this.satMin);
 
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
@@ -106,20 +98,21 @@ class BlueFilter {
       }
     }
 
-    // Apply morphological opening (erosion + dilation) to clean noise
-    const mask = this._morphCleanup(rawMask, outW, outH);
+    // v2.4.0: 亮度高通模式下使用連續灰階（不做二值化形態學處理）
+    const mask = rawMask;
 
-    // Build sparse blue pixel index list for peak detector (fast NMS scanning)
+    // 亮度高通模式：閾值 > 30 的像素才參與偵測（~12% of max）
+    const BRIGHT_PIXEL_THRESHOLD = 30;
     const bluePixels = [];
     for (let i = 0; i < outW * outH; i++) {
-      if (mask[i] > 0) {
+      if (mask[i] > BRIGHT_PIXEL_THRESHOLD) {
         bluePixels.push(i);
       }
     }
 
     // Adaptive threshold update
     if (this.adaptiveEnabled) {
-      this._updateAdaptiveThreshold(blueDiffValues, outW * outH);
+      this._updateAdaptiveThreshold(brightnessValues, outW * outH);
     }
 
     return { mask, blueDiffValues, brightnessValues, bluePixels, width: outW, height: outH, downscale };
@@ -148,9 +141,6 @@ class BlueFilter {
     gl.uniform1i(this.uVideo, 0);
     gl.uniform1f(this.uThreshold, this.threshold);
     gl.uniform1f(this.uBrightness, this.brightnessFloor);
-    gl.uniform1f(this.uHueCenter, this.hueCenter);
-    gl.uniform1f(this.uHueRange, this.hueRange);
-    gl.uniform1f(this.uSatMin, this.satMin);
 
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
@@ -161,18 +151,6 @@ class BlueFilter {
 
   setBrightnessFloor(value) {
     this.brightnessFloor = Math.max(0.05, Math.min(0.80, value));
-  }
-
-  setHueCenter(value) {
-    this.hueCenter = Math.max(0, Math.min(1.0, value));
-  }
-
-  setHueRange(value) {
-    this.hueRange = Math.max(0.01, Math.min(0.5, value));
-  }
-
-  setSatMin(value) {
-    this.satMin = Math.max(0, Math.min(1.0, value));
   }
 
   destroy() {
@@ -218,9 +196,6 @@ class BlueFilter {
     this.uVideo = gl.getUniformLocation(program, 'u_video');
     this.uThreshold = gl.getUniformLocation(program, 'u_threshold');
     this.uBrightness = gl.getUniformLocation(program, 'u_brightness');
-    this.uHueCenter = gl.getUniformLocation(program, 'u_hueCenter');
-    this.uHueRange = gl.getUniformLocation(program, 'u_hueRange');
-    this.uSatMin = gl.getUniformLocation(program, 'u_satMin');
 
     return program;
   }
@@ -384,20 +359,7 @@ precision mediump float;
 uniform sampler2D u_video;
 uniform float u_threshold;
 uniform float u_brightness;
-uniform float u_hueCenter;
-uniform float u_hueRange;
-uniform float u_satMin;
 varying vec2 v_texCoord;
-
-// RGB to HSV conversion
-vec3 rgb2hsv(vec3 c) {
-  vec4 K = vec4(0.0, -1.0/3.0, 2.0/3.0, -1.0);
-  vec4 p = mix(vec4(c.bg, K.wz), vec4(c.gb, K.xy), step(c.b, c.g));
-  vec4 q = mix(vec4(p.xyw, c.r), vec4(c.r, p.yzx), step(p.x, c.r));
-  float d = q.x - min(q.w, q.y);
-  float e = 1.0e-10;
-  return vec3(abs(q.z + (q.w - q.y) / (6.0 * d + e)), d / (q.x + e), q.x);
-}
 
 void main() {
   vec4 color = texture2D(u_video, v_texCoord);
@@ -405,50 +367,25 @@ void main() {
   float g = color.g;
   float b = color.b;
 
-  // Blue differential: how much bluer than average of R+G
+  // 亮度和藍色差異（保留供下游使用）
+  float brightness = max(r, max(g, b));
   float blueDiff = b - (r + g) * 0.5;
 
-  // Brightness gate: LED must be reasonably bright (point light source)
-  float brightness = max(r, max(g, b));
+  // === 亮度高通濾波器 ===
+  // 抑制低於閾值的環境光，凸顯發光體
+  float suppressed = max(0.0, brightness - u_threshold);
+  float maxRange = max(0.001, 1.0 - u_threshold);
+  // 非線性增強：pow(x, 1.5) 讓亮點更突出，暗部更暗
+  float enhanced = pow(suppressed / maxRange, 1.5);
 
-  // HSV-based hue filter for blue range
-  vec3 hsv = rgb2hsv(color.rgb);
-  float hue = hsv.x;       // 0-1 (0=red, 0.33=green, 0.67=blue)
-  float sat = hsv.y;       // 0-1
+  // 藍色加權：略偏好藍色光源（+30% 上限）
+  // 幫助區分藍色 LED/燈條 vs 白色天花板燈
+  float blueBoost = clamp(blueDiff * 2.0, 0.0, 0.3);
+  float finalScore = clamp(enhanced + blueBoost, 0.0, 1.0);
 
-  // Hue distance (circular, wraps around 0/1)
-  float hueDist = min(abs(hue - u_hueCenter), 1.0 - abs(hue - u_hueCenter));
-  float hueOk = step(hueDist, u_hueRange);
-
-  // Saturation gate: must be sufficiently saturated (not white/gray)
-  float satOk = step(u_satMin, sat);
-
-  // === PATH 1: Normal blue detection ===
-  // Blue diff > threshold AND bright AND hue in range AND saturated
-  float normalBlue = step(u_threshold, blueDiff) * step(u_brightness, brightness) * hueOk * satOk;
-
-  // === PATH 2: Saturated/overexposed LED center detection ===
-  // Very bright (>0.85) AND blue is near the max channel (within 0.05)
-  // Catches near-white pixels at LED center where camera sensor saturated
-  // Relaxed: allows white-balanced pixels where R or G slightly exceeds B
-  float isBright = step(0.85, brightness);
-  float maxChannel = max(r, max(g, b));
-  float blueNearMax = step(maxChannel - b, 0.05);
-  float hasMinBlueDiff = step(0.005, blueDiff);
-  float saturatedLED = isBright * blueNearMax * hasMinBlueDiff;
-
-  // Combined: either path passes
-  float isBlue = clamp(normalBlue + saturatedLED, 0.0, 1.0);
-
-  // R = binary mask (0 or 1 -> 0 or 255)
-  // G = blue diff strength (clamped to 0-1)
-  // B = brightness value
-  // A = 1
-  gl_FragColor = vec4(
-    isBlue,
-    clamp(blueDiff, 0.0, 1.0),
-    brightness,
-    1.0
-  );
+  // R = 連續亮度分數 (0-1)
+  // G = blueDiff (0-1) — 保留供診斷
+  // B = 原始亮度 (0-1)
+  gl_FragColor = vec4(finalScore, clamp(blueDiff, 0.0, 1.0), brightness, 1.0);
 }
 `;

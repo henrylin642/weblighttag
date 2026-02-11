@@ -122,8 +122,14 @@ class BlobDetector {
    * @returns {Array<Blob>} Detected blobs with centroid, area, bbox, brightness
    */
   detect(mask, width, height, blueDiffValues, downscale = 1, brightnessValues = null) {
+    // v2.4.0: mask 可能是連續灰階，需要二值化才能做 connected component
+    const binaryMask = new Uint8Array(mask.length);
+    for (let i = 0; i < mask.length; i++) {
+      binaryMask[i] = mask[i] > 80 ? 255 : 0;
+    }
+
     // Connected-component labeling
-    const { labels, uf } = this._labelComponents(mask, width, height);
+    const { labels, uf } = this._labelComponents(binaryMask, width, height);
 
     // Collect statistics per component
     const stats = this._collectStats(labels, uf, width, height, blueDiffValues, brightnessValues);
@@ -204,8 +210,14 @@ class BlobDetector {
    * @returns {Array<StripBlob>} Detected strip blobs, sorted by Y position (top to bottom)
    */
   detectStrips(mask, width, height, blueDiffValues, downscale = 1, brightnessValues = null) {
+    // v2.4.0: mask 可能是連續灰階，需要二值化才能做 connected component
+    const binaryMask = new Uint8Array(mask.length);
+    for (let i = 0; i < mask.length; i++) {
+      binaryMask[i] = mask[i] > 80 ? 255 : 0;
+    }
+
     // Connected-component labeling
-    const { labels, uf } = this._labelComponents(mask, width, height);
+    const { labels, uf } = this._labelComponents(binaryMask, width, height);
 
     // Collect statistics per component
     const stats = this._collectStats(labels, uf, width, height, blueDiffValues, brightnessValues);
