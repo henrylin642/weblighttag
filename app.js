@@ -199,11 +199,12 @@
           cfgFocus.max = focusMax;
           cfgFocus.step = focusStep;
 
-          // Clamp 初始值到設備實際範圍
-          const initDist = Math.max(focusMin, Math.min(focusMax,
-            parseFloat(cfgFocus.value) || 0.5));
+          // 初始值 = focusMin（通常 0 = 最遠/無窮遠）
+          // Android Chrome 的 focusDistance 單位可能是 diopters（1/m），非公尺
+          // 0=遠, 大值=近，不假設單位，讓用戶自行調整
+          const initDist = focusMin;
           cfgFocus.value = initDist;
-          valFocus.textContent = initDist.toFixed(2) + 'm';
+          valFocus.textContent = initDist.toFixed(2);
 
           try {
             await track.applyConstraints({ focusDistance: initDist });
@@ -218,7 +219,7 @@
             if (actualDist !== undefined && actualDist !== null) {
               state.focusDistance = actualDist;
               cfgFocus.value = actualDist;
-              valFocus.textContent = actualDist.toFixed(2) + 'm';
+              valFocus.textContent = actualDist.toFixed(2);
             } else {
               state.focusDistance = initDist;
             }
@@ -999,13 +1000,13 @@
       }
       state.adaptiveThreshold = true;
 
-      // Reset focus distance to slider midpoint
+      // Reset focus distance to min（最遠對焦）
       const track = state.stream?.getVideoTracks()[0];
       if (track) {
-        const mid = (parseFloat(cfgFocus.min) + parseFloat(cfgFocus.max)) / 2;
-        cfgFocus.value = mid;
-        valFocus.textContent = mid.toFixed(2) + 'm';
-        track.applyConstraints({ focusDistance: mid }).catch(() => {});
+        const minVal = parseFloat(cfgFocus.min) || 0;
+        cfgFocus.value = minVal;
+        valFocus.textContent = minVal.toFixed(2);
+        track.applyConstraints({ focusDistance: minVal }).catch(() => {});
       }
     });
 
@@ -1073,9 +1074,10 @@
     });
 
     // Focus distance slider with readback verification
+    // 單位可能是 diopters（0=遠, 大值=近），不假設為公尺
     cfgFocus.addEventListener('input', async () => {
       const dist = parseFloat(cfgFocus.value);
-      valFocus.textContent = dist.toFixed(2) + 'm';
+      valFocus.textContent = dist.toFixed(2);
       const track = state.stream?.getVideoTracks()[0];
       if (track) {
         try {
@@ -1086,7 +1088,7 @@
           const actual = settings.focusDistance;
           if (actual !== undefined && actual !== null) {
             state.focusDistance = actual;
-            valFocus.textContent = actual.toFixed(2) + 'm';
+            valFocus.textContent = actual.toFixed(2);
           } else {
             state.focusDistance = dist;
           }
