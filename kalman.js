@@ -54,20 +54,28 @@ class SimpleKalman {
 }
 
 /**
- * Manages Kalman filters for tracking multiple LED positions.
+ * Manages Kalman filters for tracking multiple feature positions.
+ * Supports dynamic feature IDs (LEDs, strip edges, etc.)
  */
 class LEDTracker {
   constructor(config = {}) {
     this.processNoise = config.processNoise || 0.005;
     this.measurementNoise = config.measurementNoise || 0.5;
     this.maxLostFrames = config.maxLostFrames || 3;
+    this.minTrackingFeatures = config.minTrackingFeatures || 4;
 
-    // Filters for each LED (id 1-5), each with x and y
+    // Dynamic feature IDs — supports both LED and strip edge features
+    // Default: 5 LEDs + 6 strip edges = 11 features
+    this.featureIds = config.featureIds || [
+      'LED1', 'LED2', 'LED3', 'LED4', 'LED5',
+      'ST_L', 'ST_R', 'SM_L', 'SM_R', 'SB_L', 'SB_R'
+    ];
+
     this.filters = {};
     this.lostCount = {};
     this.lastPositions = {};
 
-    for (let id = 1; id <= 5; id++) {
+    for (const id of this.featureIds) {
       this.filters[id] = {
         x: new SimpleKalman(this.processNoise, this.measurementNoise),
         y: new SimpleKalman(this.processNoise, this.measurementNoise)
@@ -82,14 +90,14 @@ class LEDTracker {
 
   /**
    * Update tracking with new detected positions.
-   * @param {Array<{id, x, y}>} detectedPoints - Detected LED positions (normalized 0-1)
+   * @param {Array<{id: string, x: number, y: number}>} detectedPoints - Detected feature positions (normalized 0-1)
    * @returns {{ tracked: Array, isTracking: boolean, stability: number }}
    */
   update(detectedPoints) {
     const tracked = [];
     let trackedCount = 0;
 
-    for (let id = 1; id <= 5; id++) {
+    for (const id of this.featureIds) {
       const det = detectedPoints.find(p => p.id === id);
 
       if (det) {
@@ -111,7 +119,7 @@ class LEDTracker {
       }
     }
 
-    if (trackedCount === 5) {
+    if (trackedCount >= this.minTrackingFeatures) {
       this.consecutiveLost = 0;
       this.isTracking = true;
     } else {
@@ -121,19 +129,19 @@ class LEDTracker {
       }
     }
 
-    // Stability: percentage of tracked frames (smoothed)
-    const stability = trackedCount / 5;
+    // Stability: percentage of tracked features (smoothed)
+    const stability = trackedCount / this.featureIds.length;
 
     return { tracked, isTracking: this.isTracking, stability };
   }
 
   /**
    * Get predicted positions for search windows.
-   * @returns {Array<{id, x, y}>} Predicted positions for all tracked LEDs
+   * @returns {Array<{id: string, x: number, y: number}>} Predicted positions for all tracked features
    */
   getPredictions() {
     const predictions = [];
-    for (let id = 1; id <= 5; id++) {
+    for (const id of this.featureIds) {
       if (this.lastPositions[id]) {
         predictions.push({
           id,
@@ -149,12 +157,36 @@ class LEDTracker {
    * Reset all tracking state.
    */
   reset() {
-    for (let id = 1; id <= 5; id++) {
+    for (const id of this.featureIds) {
       this.filters[id].x.reset();
       this.filters[id].y.reset();
       this.lostCount[id] = 0;
       this.lastPositions[id] = null;
     }
+    this.isTracking = false;
+    this.consecutiveLost = 0;
+  }
+
+  /**
+   * Reconfigure tracked feature IDs at runtime.
+   * Resets all filters and creates new ones for the new ID set.
+   * @param {Array<string>} ids - New feature ID array
+   */
+  setFeatureIds(ids) {
+    this.featureIds = ids;
+    this.filters = {};
+    this.lostCount = {};
+    this.lastPositions = {};
+
+    for (const id of this.featureIds) {
+      this.filters[id] = {
+        x: new SimpleKalman(this.processNoise, this.measurementNoise),
+        y: new SimpleKalman(this.processNoise, this.measurementNoise)
+      };
+      this.lostCount[id] = 0;
+      this.lastPositions[id] = null;
+    }
+
     this.isTracking = false;
     this.consecutiveLost = 0;
   }

@@ -13,15 +13,10 @@ class BlueFilter {
     this.fbTexture = null;
     this.fbWidth = 0;
     this.fbHeight = 0;
-    this.threshold = 0.12;
+    this.threshold = 0.30;
     this.brightnessFloor = 0.15;
     this.adaptiveEnabled = true;
     this._ready = false;
-
-    // HSV filter parameters
-    this.hueCenter = 0.63;    // Blue hue center (0-1, ~227°/360°)
-    this.hueRange = 0.12;     // Hue tolerance (±0.12 = ±43°, covers ~184°-270°)
-    this.satMin = 0.15;       // Minimum saturation
   }
 
   init() {
@@ -74,9 +69,6 @@ class BlueFilter {
     gl.uniform1i(this.uVideo, 0);
     gl.uniform1f(this.uThreshold, this.threshold);
     gl.uniform1f(this.uBrightness, this.brightnessFloor);
-    gl.uniform1f(this.uHueCenter, this.hueCenter);
-    gl.uniform1f(this.uHueRange, this.hueRange);
-    gl.uniform1f(this.uSatMin, this.satMin);
 
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
@@ -106,20 +98,21 @@ class BlueFilter {
       }
     }
 
-    // Apply morphological opening (erosion + dilation) to clean noise
-    const mask = this._morphCleanup(rawMask, outW, outH);
+    // v2.4.0: 亮度高通模式下使用連續灰階（不做二值化形態學處理）
+    const mask = rawMask;
 
-    // Build sparse blue pixel index list for peak detector (fast NMS scanning)
+    // v2.5.0: 乘積濾波器 — R 通道 > 80 才參與偵測（brightnessGate × blueWeight）
+    const BRIGHT_PIXEL_THRESHOLD = 80;
     const bluePixels = [];
     for (let i = 0; i < outW * outH; i++) {
-      if (mask[i] > 0 || brightnessValues[i] > 200) {
+      if (mask[i] > BRIGHT_PIXEL_THRESHOLD) {
         bluePixels.push(i);
       }
     }
 
     // Adaptive threshold update
     if (this.adaptiveEnabled) {
-      this._updateAdaptiveThreshold(blueDiffValues, outW * outH);
+      this._updateAdaptiveThreshold(brightnessValues, outW * outH);
     }
 
     return { mask, blueDiffValues, brightnessValues, bluePixels, width: outW, height: outH, downscale };
@@ -148,31 +141,16 @@ class BlueFilter {
     gl.uniform1i(this.uVideo, 0);
     gl.uniform1f(this.uThreshold, this.threshold);
     gl.uniform1f(this.uBrightness, this.brightnessFloor);
-    gl.uniform1f(this.uHueCenter, this.hueCenter);
-    gl.uniform1f(this.uHueRange, this.hueRange);
-    gl.uniform1f(this.uSatMin, this.satMin);
 
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
 
   setThreshold(value) {
-    this.threshold = Math.max(0.02, Math.min(0.50, value));
+    this.threshold = Math.max(0.05, Math.min(0.60, value));
   }
 
   setBrightnessFloor(value) {
     this.brightnessFloor = Math.max(0.05, Math.min(0.80, value));
-  }
-
-  setHueCenter(value) {
-    this.hueCenter = Math.max(0, Math.min(1.0, value));
-  }
-
-  setHueRange(value) {
-    this.hueRange = Math.max(0.01, Math.min(0.5, value));
-  }
-
-  setSatMin(value) {
-    this.satMin = Math.max(0, Math.min(1.0, value));
   }
 
   destroy() {
@@ -218,9 +196,6 @@ class BlueFilter {
     this.uVideo = gl.getUniformLocation(program, 'u_video');
     this.uThreshold = gl.getUniformLocation(program, 'u_threshold');
     this.uBrightness = gl.getUniformLocation(program, 'u_brightness');
-    this.uHueCenter = gl.getUniformLocation(program, 'u_hueCenter');
-    this.uHueRange = gl.getUniformLocation(program, 'u_hueRange');
-    this.uSatMin = gl.getUniformLocation(program, 'u_satMin');
 
     return program;
   }
@@ -284,18 +259,25 @@ class BlueFilter {
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   }
 
-  _updateAdaptiveThreshold(blueDiffValues, count) {
-    // Compute the 97th percentile of blue diff values to set adaptive threshold
-    // Using 97th instead of 99.5th for more stable estimation (less sensitive to noise clusters)
+  _updateAdaptiveThreshold(brightnessValues, count) {
+    // v2.5.0: 基於原始亮度（B 通道）建直方圖
+    // 找出環境亮度分布，自動調整 brightness gate 閾值
     const histogram = new Uint32Array(256);
+    let signalCount = 0;
     for (let i = 0; i < count; i++) {
-      histogram[blueDiffValues[i]]++;
+      if (brightnessValues[i] > 30) {
+        histogram[brightnessValues[i]]++;
+        signalCount++;
+      }
     }
 
-    const targetCount = Math.floor(count * 0.97);
+    if (signalCount < 50) return;
+
+    // 97th percentile：top 3% 是 LED/亮光源
+    const targetCount = Math.floor(signalCount * 0.97);
     let cumulative = 0;
     let percentile97 = 0;
-    for (let i = 0; i < 256; i++) {
+    for (let i = 31; i < 256; i++) {
       cumulative += histogram[i];
       if (cumulative >= targetCount) {
         percentile97 = i;
@@ -303,10 +285,11 @@ class BlueFilter {
       }
     }
 
-    // Convert to normalized (0-1) with 0.6x factor (lower threshold to catch weak blue signals)
-    const adaptiveThresh = (percentile97 / 255) * 0.6;
-    // Smoothly blend with current threshold (EMA), cap at 0.20 to protect saturated LED detection
-    this.threshold = this.threshold * 0.9 + Math.max(0.08, Math.min(0.20, adaptiveThresh)) * 0.1;
+    // 閾值 = 97th percentile 的 50%
+    const adaptiveThresh = (percentile97 / 255) * 0.50;
+    // 動態 floor = threshold/2, ceiling 0.45, EMA 平滑
+    const floor = this.threshold * 0.5;
+    this.threshold = this.threshold * 0.9 + Math.max(floor, Math.min(0.45, adaptiveThresh)) * 0.1;
   }
 
   /**
@@ -322,16 +305,20 @@ class BlueFilter {
     const eroded = new Uint8Array(size);
     const dilated = new Uint8Array(size);
 
-    // Erosion (4-connectivity): pixel survives only if all 4 neighbors are set
+    // Erosion (majority-vote): pixel survives if at least 3 of 4 neighbors are set
+    // Gentler than strict 4-connectivity to preserve small LED blobs (2-4 px)
     for (let y = 1; y < h - 1; y++) {
       for (let x = 1; x < w - 1; x++) {
         const idx = y * w + x;
-        if (mask[idx] &&
-            mask[idx - 1] &&       // left
-            mask[idx + 1] &&       // right
-            mask[idx - w] &&       // top
-            mask[idx + w]) {       // bottom
-          eroded[idx] = 255;
+        if (mask[idx]) {
+          const neighborCount =
+            (mask[idx - 1] ? 1 : 0) +   // left
+            (mask[idx + 1] ? 1 : 0) +   // right
+            (mask[idx - w] ? 1 : 0) +   // top
+            (mask[idx + w] ? 1 : 0);    // bottom
+          if (neighborCount >= 3) {
+            eroded[idx] = 255;
+          }
         }
       }
     }
@@ -372,20 +359,7 @@ precision mediump float;
 uniform sampler2D u_video;
 uniform float u_threshold;
 uniform float u_brightness;
-uniform float u_hueCenter;
-uniform float u_hueRange;
-uniform float u_satMin;
 varying vec2 v_texCoord;
-
-// RGB to HSV conversion
-vec3 rgb2hsv(vec3 c) {
-  vec4 K = vec4(0.0, -1.0/3.0, 2.0/3.0, -1.0);
-  vec4 p = mix(vec4(c.bg, K.wz), vec4(c.gb, K.xy), step(c.b, c.g));
-  vec4 q = mix(vec4(p.xyw, c.r), vec4(c.r, p.yzx), step(p.x, c.r));
-  float d = q.x - min(q.w, q.y);
-  float e = 1.0e-10;
-  return vec3(abs(q.z + (q.w - q.y) / (6.0 * d + e)), d / (q.x + e), q.x);
-}
 
 void main() {
   vec4 color = texture2D(u_video, v_texCoord);
@@ -393,48 +367,31 @@ void main() {
   float g = color.g;
   float b = color.b;
 
-  // Blue differential: how much bluer than average of R+G
+  float brightness = max(r, max(g, b));
   float blueDiff = b - (r + g) * 0.5;
 
-  // Brightness gate: LED must be reasonably bright (point light source)
-  float brightness = max(r, max(g, b));
+  // === Stage 1: 亮度平滑門檻 ===
+  // smoothstep: 0 at threshold, 1 at threshold+0.15
+  // 排除暗背景，通過亮光源
+  float brightnessGate = smoothstep(u_threshold, u_threshold + 0.15, brightness);
 
-  // HSV-based hue filter for blue range
-  vec3 hsv = rgb2hsv(color.rgb);
-  float hue = hsv.x;       // 0-1 (0=red, 0.33=green, 0.67=blue)
-  float sat = hsv.y;       // 0-1
+  // === Stage 2: 藍色選擇性 ===
+  // smoothstep(-0.05, 0.15, blueDiff):
+  //   blueDiff = -0.10 → 0.0  （暖白天花板燈：拒絕）
+  //   blueDiff = -0.05 → 0.0  （中性暖光：拒絕）
+  //   blueDiff = -0.02 → 0.09 （LED 中心近白：弱通過）
+  //   blueDiff =  0.00 → 0.25 （中性：通過）
+  //   blueDiff = +0.05 → 0.625（藍色光暈：通過）
+  //   blueDiff = +0.15 → 1.0  （強藍：完全通過）
+  float blueWeight = smoothstep(-0.05, 0.15, blueDiff);
 
-  // Hue distance (circular, wraps around 0/1)
-  float hueDist = min(abs(hue - u_hueCenter), 1.0 - abs(hue - u_hueCenter));
-  float hueOk = step(hueDist, u_hueRange);
+  // === Stage 3: 乘法組合 ===
+  // 必須同時亮且藍才通過 — 天花板燈（亮但不藍）= 0
+  float finalScore = brightnessGate * blueWeight;
 
-  // Saturation gate: must be sufficiently saturated (not white/gray)
-  float satOk = step(u_satMin, sat);
-
-  // === PATH 1: Normal blue detection ===
-  // Blue diff > threshold AND bright AND hue in range AND saturated
-  float normalBlue = step(u_threshold, blueDiff) * step(u_brightness, brightness) * hueOk * satOk;
-
-  // === PATH 2: Saturated/overexposed LED center detection ===
-  // Very bright (>0.85) AND any blue excess (>0.02) AND blue is max channel
-  // Catches near-white pixels at LED center where camera sensor saturated
-  float isBright = step(0.85, brightness);
-  float hasBlueExcess = step(0.02, blueDiff);
-  float blueIsMax = step(r, b) * step(g, b);
-  float saturatedLED = isBright * hasBlueExcess * blueIsMax;
-
-  // Combined: either path passes
-  float isBlue = clamp(normalBlue + saturatedLED, 0.0, 1.0);
-
-  // R = binary mask (0 or 1 -> 0 or 255)
-  // G = blue diff strength (clamped to 0-1)
-  // B = brightness value
-  // A = 1
-  gl_FragColor = vec4(
-    isBlue,
-    clamp(blueDiff, 0.0, 1.0),
-    brightness,
-    1.0
-  );
+  // R = 組合分數 brightnessGate×blueWeight (0-1)
+  // G = blueDiff+0.5 映射到 0-1（保留正負值供診斷）
+  // B = 原始亮度 (0-1)
+  gl_FragColor = vec4(finalScore, clamp(blueDiff + 0.5, 0.0, 1.0), brightness, 1.0);
 }
 `;

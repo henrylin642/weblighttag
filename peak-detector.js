@@ -7,11 +7,13 @@
 class PeakDetector {
   constructor(config = {}) {
     // NMS 窗口半徑（實際窗口 = 2R+1）
-    this.nmsRadius = config.nmsRadius || 3;
+    this.nmsRadius = config.nmsRadius || 5;
     // 最低峰值分數（過濾暗噪點）
     this.minPeakScore = config.minPeakScore || 80;
     // 形狀過濾閾值
-    this.minPointiness = config.minPointiness || 1.5;
+    this.minPointiness = config.minPointiness || 1.15;
+    // 最低亮度（排除暗環境噪點）
+    this.minBrightness = config.minBrightness || 60;
     this.minIsotropy = config.minIsotropy || 0.3;
     // 最大返回候選數
     this.maxCandidates = config.maxCandidates || 15;
@@ -49,24 +51,37 @@ class PeakDetector {
     // 2. 計算分數圖（僅遍歷藍色區域像素）
     this._computeScoreMap(mask, brightnessValues, blueDiffValues, width, height, scoreMap, bluePixels);
 
-    // 3. 3×3 盒狀模糊（消除單像素噪點）
-    this._boxBlur3x3(scoreMap, smoothed, width, height);
+    // 3. 條件式模糊：稀疏遮罩時跳過（保留小 LED 峰值銳度）
+    //    典型 LED 場景遮罩佔比 < 12%，此時 blur 會摧毀峰值
+    const totalPixels = width * height;
+    const blueCount = bluePixels ? bluePixels.length : 0;
+    const bluePercent = (blueCount / totalPixels) * 100;
+
+    let nmsInput;
+    if (bluePercent < 15) {
+      // 稀疏模式：直接用原始 scoreMap
+      nmsInput = scoreMap;
+    } else {
+      // 密集模式：套用模糊抑制噪點
+      this._boxBlur3x3(scoreMap, smoothed, width, height);
+      nmsInput = smoothed;
+    }
 
     // 4. NMS：找局部最大值
-    const rawPeaks = this._nms(smoothed, width, height, bluePixels);
+    const rawPeaks = this._nms(nmsInput, width, height, bluePixels);
 
     // 5. 亞像素精化 + 形狀分析
     const candidates = [];
     for (const peak of rawPeaks) {
       // 亞像素精化
-      const refined = this._subPixelRefine(smoothed, peak.x, peak.y, width, height, 2);
+      const refined = this._subPixelRefine(nmsInput, peak.x, peak.y, width, height, 2);
 
       // 形狀分析：尖銳度 + 各向同性
-      const pointiness = this._computePointiness(smoothed, peak.x, peak.y, width, height);
-      const isotropy = this._computeIsotropy(smoothed, peak.x, peak.y, width, height);
+      const pointiness = this._computePointiness(nmsInput, peak.x, peak.y, width, height);
+      const isotropy = this._computeIsotropy(nmsInput, peak.x, peak.y, width, height);
 
       // 估算面積（分數 > 50% 峰值的像素數）
-      const area = this._estimateArea(smoothed, peak.x, peak.y, width, height, peak.score);
+      const area = this._estimateArea(nmsInput, peak.x, peak.y, width, height, peak.score);
 
       // 原始像素位置的亮度數據
       const idx = peak.y * width + peak.x;
@@ -101,9 +116,11 @@ class PeakDetector {
       });
     }
 
-    // 6. 形狀過濾：排除非點光源峰值（如燈條上的局部最大值）
+    // 6. 形狀 + 亮度過濾：排除非點光源峰值和暗環境噪點
     const filtered = candidates.filter(c =>
-      c.pointiness >= this.minPointiness && c.isotropy >= this.minIsotropy
+      c.pointiness >= this.minPointiness &&
+      c.isotropy >= this.minIsotropy &&
+      c.realBrightness >= this.minBrightness
     );
 
     // 7. 排序：複合分數 = peakScore × pointiness × isotropy
@@ -146,25 +163,29 @@ class PeakDetector {
   }
 
   /**
-   * 計算分數圖：brightness × 0.7 + blueDiff × 0.3
-   * 僅處理藍色遮罩內的像素（或極亮像素）以節省時間。
+   * v2.5.0: R 通道已是 brightnessGate × blueWeight 組合分數
+   * 直接用 mask[i] 作為分數，不再需要加權計算。
+   * G 通道編碼改為 blueDiff+0.5，舊公式會算錯，故簡化。
    */
   _computeScoreMap(mask, brightness, blueDiff, width, height, output, bluePixels) {
-    const bw = this.brightnessWeight;
-    const dw = this.blueDiffWeight;
-
     if (bluePixels && bluePixels.length > 0) {
       // 稀疏模式：僅遍歷已知的藍色像素
       for (let k = 0; k < bluePixels.length; k++) {
         const i = bluePixels[k];
-        output[i] = brightness[i] * bw + blueDiff[i] * dw;
+        // R 通道 = 組合分數，直接使用
+        // 極亮 LED 中心（brightness > 200）保底分數，防止低 blueWeight 壓低
+        output[i] = mask[i] > 200
+          ? Math.max(mask[i], brightness[i] * 0.8)
+          : mask[i];
       }
     } else {
       // 完整遍歷（回退）
       const size = width * height;
       for (let i = 0; i < size; i++) {
-        if (mask[i] > 0 || brightness[i] > 200) {
-          output[i] = brightness[i] * bw + blueDiff[i] * dw;
+        if (mask[i] > 0) {
+          output[i] = mask[i] > 200
+            ? Math.max(mask[i], brightness[i] * 0.8)
+            : mask[i];
         }
       }
     }

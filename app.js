@@ -8,6 +8,8 @@
 (function () {
   'use strict';
 
+  const APP_VERSION = '2.5.1';
+
   // --- State ---
 
   const state = {
@@ -23,6 +25,7 @@
 
     // Detection state
     detectionState: 'idle', // idle | scanning | candidate | locked | tracking
+    focusStatus: 'unknown',
 
     // Offscreen canvas for full-res pixel access (used in sub-pixel refinement)
     offscreen: null,
@@ -51,6 +54,7 @@
   const btnSettings = $('btn-settings');
   const btnStop = $('btn-stop');
   const btnReset = $('btn-reset');
+  const btnResetParams = $('btn-reset-params');
   const settingsDrawer = $('settings-drawer');
   const drawerHandle = $('drawer-handle');
 
@@ -61,13 +65,8 @@
   const valThreshold = $('val-threshold');
   const valBrightness = $('val-brightness');
 
-  // HSV controls
-  const cfgHue = $('cfg-hue');
-  const cfgHueRange = $('cfg-hue-range');
-  const cfgSat = $('cfg-sat');
-  const valHue = $('val-hue');
-  const valHueRange = $('val-hue-range');
-  const valSat = $('val-sat');
+  // Tap-to-focus state
+  let focusRingTimer = null;
 
   const cfgFx = $('cfg-fx');
   const cfgFy = $('cfg-fy');
@@ -81,29 +80,29 @@
     blueFilter.init();
 
     peakDetector = new PeakDetector({
-      nmsRadius: 3,
+      nmsRadius: 3,          // 5→3：NMS 窗口 11×11→7×7，允許偵測更近的相鄰峰值
       minPeakScore: 80,
-      minPointiness: 1.5,
+      minPointiness: 1.05,   // 1.15→1.05：合併光暈中 LED 尖銳度僅 1.08-1.2
       minIsotropy: 0.3,
-      maxCandidates: 15
+      maxCandidates: 20,
+      minBrightness: 80
     });
 
     blobDetector = new BlobDetector({
-      minArea: 4,
+      minArea: 2,
       maxArea: 300,
       maxAspectRatio: 2.5
     });
 
-    geometryMatcher = new GeometryMatcher({
-      sensitivity: state.sensitivity
-    });
+    geometryMatcher = new GeometryMatcher();
 
     pnpSolver = new PnPSolver();
 
     tracker = new LEDTracker({
       processNoise: 0.005,
       measurementNoise: 0.5,
-      maxLostFrames: 3
+      maxLostFrames: 3,
+      minTrackingFeatures: 4
     });
 
     feedback = new FeedbackManager();
@@ -118,7 +117,8 @@
         video: {
           facingMode: 'environment',
           width: { ideal: 1920 },
-          height: { ideal: 1080 }
+          height: { ideal: 1080 },
+          focusMode: 'continuous'
         },
         audio: false
       };
@@ -145,27 +145,59 @@
       let vh = video.videoHeight;
       console.log(`Camera initial: ${vw}x${vh}`);
 
-      // Try to upgrade resolution via applyConstraints
+      // 兩步式約束設定：解析度和相機模式分開呼叫
+      // v2.3.3 合併所有約束導致 Android Chrome reject 整個呼叫（焦:failed）
+      // 原因：focusMode/exposureMode/whiteBalanceMode 來自 Image Capture API 擴展，
+      //       與基礎 width/height 約束混合會觸發 OverconstrainedError
       const track = state.stream.getVideoTracks()[0];
       if (track) {
+        const caps = track.getCapabilities ? track.getCapabilities() : {};
+
+        // === Step A: 解析度升級 ===
         try {
-          const caps = track.getCapabilities ? track.getCapabilities() : {};
           const maxW = caps.width ? caps.width.max : 1920;
           const maxH = caps.height ? caps.height.max : 1080;
           const targetW = Math.min(maxW, 1920);
           const targetH = Math.min(maxH, 1080);
+
           await track.applyConstraints({
             width: { ideal: targetW },
             height: { ideal: targetH }
           });
-          // Wait for resolution to update
-          await new Promise(r => setTimeout(r, 300));
+          await new Promise(r => setTimeout(r, 200));
           vw = video.videoWidth;
           vh = video.videoHeight;
           console.log(`Camera upgraded: ${vw}x${vh} (max: ${maxW}x${maxH})`);
         } catch (e) {
-          console.warn('applyConstraints failed:', e);
+          console.warn('Resolution upgrade failed:', e);
         }
+
+        // === Step B: 連續對焦 + 曝光 + 白平衡 ===
+        // v2.5.1: 放棄 manual focus（focusDistance 在多數 Android 裝置無效）
+        // 改用 continuous + pointsOfInterest tap-to-focus
+        if (caps.focusMode) {
+          try {
+            await track.applyConstraints({ focusMode: 'continuous' });
+          } catch (e) {
+            console.warn('focusMode continuous failed:', e.message);
+          }
+        }
+        // 記錄 pointsOfInterest 支援狀態
+        state.tapFocusSupported = !!caps.pointsOfInterest;
+        console.log(`pointsOfInterest supported: ${state.tapFocusSupported}`);
+
+        if (caps.exposureMode) {
+          try { await track.applyConstraints({ exposureMode: 'continuous' }); } catch (e) {}
+        }
+        if (caps.whiteBalanceMode) {
+          try { await track.applyConstraints({ whiteBalanceMode: 'continuous' }); } catch (e) {}
+        }
+
+        // 等待硬體穩定後驗證實際狀態
+        await new Promise(r => setTimeout(r, 300));
+        const settings = track.getSettings();
+        state.focusStatus = settings.focusMode || (caps.focusMode ? 'requested' : 'unsupported');
+        console.log(`focusMode: ${state.focusStatus}, tapFocus: ${state.tapFocusSupported}, exposure: ${settings.exposureMode || 'N/A'}`);
       }
 
       state.resolution = `${vw}x${vh}`;
@@ -278,10 +310,11 @@
       state.lastFpsTime = now;
     }
 
-    // Step 1: Run WebGL blue filter
+    // Step 1: Run WebGL blue filter (downscale=2 → 960×540)
+    // v2.3.3: 3→2 提升 LED 像素大小（~4px→~6px @50cm），WebGL 處理影響可忽略
     let filterResult = null;
     try {
-      filterResult = blueFilter.process(video, 4);
+      filterResult = blueFilter.process(video, 2);
     } catch (e) {
       if (state.frameCount === 1) console.error('BlueFilter error:', e);
     }
@@ -289,6 +322,7 @@
     if (filterResult) {
       // 記錄 downscale 值供自適應 NMS 使用
       state.lastDownscale = filterResult.downscale;
+      state.lastMaskPercent = filterResult.bluePixels.length / (filterResult.width * filterResult.height) * 100;
 
       // Step 2a: 峰值檢測（主要策略 — 能從連通藍色區域中提取 LED 局部峰值）
       const peaks = peakDetector.detect(
@@ -311,16 +345,34 @@
         filterResult.brightnessValues
       );
 
-      // Step 2c: 合併兩種策略的候選
+      // Step 2c: 燈條偵測 (NEW)
+      const stripBlobs = blobDetector.detectStrips(
+        filterResult.mask,
+        filterResult.width,
+        filterResult.height,
+        filterResult.blueDiffValues,
+        filterResult.downscale,
+        filterResult.brightnessValues
+      );
+
+      // Extract strip edge midpoints
+      for (const strip of stripBlobs) {
+        blobDetector.extractStripEdges(strip, filterResult.mask, filterResult.width, filterResult.height, filterResult.brightnessValues);
+      }
+
+      // Track peak count for debug HUD
+      state.lastPeakCount = peaks.length;
+
+      // Step 2d: 合併兩種策略的候選
       const candidates = mergeCandidates(peaks, blobs);
 
       // Step 3: Run detection pipeline based on state
-      processDetection(candidates, filterResult);
+      processDetection(candidates, stripBlobs, filterResult);
 
       // Debug logging (every 2 seconds)
       if (state.frameCount === 1) {
         const maskSum = filterResult.mask.reduce((s, v) => s + (v > 0 ? 1 : 0), 0);
-        console.log(`[debug] filter: ${filterResult.width}x${filterResult.height}, mask白點: ${maskSum}, peaks: ${peaks.length}, blobs: ${blobs.length}, 候選: ${candidates.length}, 閾值: ${blueFilter.threshold.toFixed(3)}`);
+        console.log(`[debug] filter: ${filterResult.width}x${filterResult.height}, mask白點: ${maskSum}, peaks: ${peaks.length}, blobs: ${blobs.length}, strips: ${stripBlobs.length}, 候選: ${candidates.length}, 閾值: ${blueFilter.threshold.toFixed(3)}`);
         // 峰值診斷資訊
         if (peaks.length > 0) {
           const topPeak = peaks[0];
@@ -341,6 +393,36 @@
     } else {
       feedback.draw(overlayCtx, displayW, displayH, getDrawData());
 
+      // Tap-to-focus 圓圈動畫
+      if (state.focusRing) {
+        const ring = state.focusRing;
+        const elapsed = Date.now() - ring.t;
+        const progress = Math.min(1, elapsed / 600);
+        const radius = 30 + (1 - progress) * 20;
+        const alpha = elapsed < 600 ? 1 : Math.max(0, 1 - (elapsed - 600) / 900);
+
+        // 縮放到 canvas 座標
+        const rect = overlay.getBoundingClientRect();
+        const sx = overlay.width / rect.width;
+        const sy = overlay.height / rect.height;
+
+        overlayCtx.save();
+        overlayCtx.strokeStyle = `rgba(100, 200, 255, ${alpha})`;
+        overlayCtx.lineWidth = 2;
+        overlayCtx.beginPath();
+        overlayCtx.arc(ring.x * sx, ring.y * sy, radius * sx, 0, Math.PI * 2);
+        overlayCtx.stroke();
+        // 十字線
+        const cr = 8 * sx;
+        overlayCtx.beginPath();
+        overlayCtx.moveTo(ring.x * sx - cr, ring.y * sy);
+        overlayCtx.lineTo(ring.x * sx + cr, ring.y * sy);
+        overlayCtx.moveTo(ring.x * sx, ring.y * sy - cr);
+        overlayCtx.lineTo(ring.x * sx, ring.y * sy + cr);
+        overlayCtx.stroke();
+        overlayCtx.restore();
+      }
+
       // Draw mask overlay AFTER feedback (so it's not cleared)
       if (state.maskMode === 'overlay' && filterResult) {
         drawMaskOverlay(filterResult);
@@ -352,7 +434,7 @@
 
   /**
    * 合併峰值檢測和 blob 檢測的候選。
-   * 以峰值為主，補充距離所有峰值 > 2% 的 blob。
+   * 以峰值為主,補充距離所有峰值 > 2% 的 blob。
    */
   function mergeCandidates(peaks, blobs) {
     // 以峰值為主
@@ -375,8 +457,8 @@
       }
     }
 
-    // 按複合分數排序，取 top 20
-    // 注意：峰值候選用 realBrightness/brightness，blob 候選用 maxRealBrightness/maxBrightness
+    // 按複合分數排序,取 top 20
+    // 注意：峰值候選用 realBrightness/brightness,blob 候選用 maxRealBrightness/maxBrightness
     merged.sort((a, b) => {
       const realBrightA = a.maxRealBrightness || a.realBrightness || 0;
       const blueDiffA = a.maxBrightness || a.brightness || 0;
@@ -391,27 +473,23 @@
     return merged.slice(0, 20);
   }
 
-  function processDetection(blobs, filterResult) {
-    const candidateCount = blobs.length;
-    state.lastCandidateCount = candidateCount;
-
+  function processDetection(blobs, stripBlobs, filterResult) {
+    // Tracking mode: try to match detected blobs to tracked positions
     if (state.detectionState === 'tracking' && tracker.isTracking) {
-      // In tracking mode: try to match detected blobs to tracked positions
       const predictions = tracker.getPredictions();
-      const matched = matchBlobsToPredictions(blobs, predictions);
+      const matched = matchBlobsToPredictions(blobs, stripBlobs, predictions);
 
-      if (matched.length === 5) {
-        // Sub-pixel refinement
-        const refined = refinePositions(matched);
-        const trackResult = tracker.update(refined);
+      if (matched.length >= 4) {
+        const trackResult = tracker.update(matched);
 
         if (trackResult.isTracking) {
-          solvePose(trackResult.tracked, trackResult.stability);
+          // Re-match to get full 2D-3D correspondences
+          solvePoseFromTracked(trackResult.tracked);
           return;
         }
       }
 
-      // Tracking failed - fall back to full detection
+      // Tracking failed - fall back
       const lostResult = tracker.update([]);
       if (!lostResult.isTracking) {
         state.detectionState = 'scanning';
@@ -421,77 +499,129 @@
     }
 
     // Full detection mode
-    if (candidateCount < 5) {
+    const ledCount = blobs.length;
+    const stripCount = stripBlobs ? stripBlobs.length : 0;
+    const extractedEdges = stripBlobs ? stripBlobs.reduce((count, s) =>
+      count + (s.edgeLeft ? 1 : 0) + (s.edgeRight ? 1 : 0), 0
+    ) : 0;
+    const totalFeatures = ledCount + extractedEdges; // actual extracted edge points
+    state.lastCandidateCount = ledCount;
+    state.lastStripCount = stripCount;
+
+    if (totalFeatures < 4) {
       state.detectionState = 'scanning';
-      feedback.setState('scanning', { candidateCount });
+      feedback.setState('scanning', { candidateCount: ledCount, stripCount });
       return;
     }
 
-    // Quick check for promising clusters
-    const quick = geometryMatcher.quickCheck(blobs);
+    // Quick check for promising detection
+    const quick = geometryMatcher.quickCheck(blobs, stripBlobs);
     if (quick.promising) {
       feedback.setState('candidate', {
-        candidateCenter: quick.clusterCenter,
-        candidateCount
+        candidateCount: ledCount,
+        stripCount,
+        info: quick.info
       });
     }
 
-    // Full geometry matching
+    // Full geometry matching (NEW: pass both LED candidates and strip blobs)
     const imageAspect = video.videoWidth / video.videoHeight;
-    const match = geometryMatcher.match(blobs, imageAspect);
+    const match = geometryMatcher.match(blobs, stripBlobs, imageAspect);
 
     if (match && match.success) {
-      // Sub-pixel refinement
-      const refined = refinePositions(match.points);
+      // Build tracked points with feature IDs for the tracker
+      const detectedPoints = [];
+      for (let i = 0; i < match.featureIds.length; i++) {
+        detectedPoints.push({
+          id: match.featureIds[i],
+          x: match.points2D[i].x,
+          y: match.points2D[i].y
+        });
+      }
 
       // Initialize tracker with matched points
       tracker.reset();
-      const trackResult = tracker.update(refined);
+      const trackResult = tracker.update(detectedPoints);
 
       state.detectionState = 'locked';
-      feedback.setState('locked', { candidateCount });
+      feedback.setState('locked', { candidateCount: ledCount, stripCount });
 
-      // Solve pose
-      solvePose(trackResult.tracked, trackResult.stability);
+      // Solve pose using the 2D-3D correspondences directly from the matcher
+      solvePoseFromMatch(match, trackResult.stability);
 
       // Transition to tracking mode
       state.detectionState = 'tracking';
-      feedback.setState('tracking', { candidateCount });
+      feedback.setState('tracking', { candidateCount: ledCount, stripCount });
     } else {
       if (quick.promising) {
         state.detectionState = 'candidate';
       } else {
         state.detectionState = 'scanning';
-        feedback.setState('scanning', { candidateCount });
+        feedback.setState('scanning', { candidateCount: ledCount, stripCount });
       }
     }
   }
 
-  function matchBlobsToPredictions(blobs, predictions) {
-    // For each predicted LED position, find the closest blob
+  function matchBlobsToPredictions(blobs, stripBlobs, predictions) {
     const matched = [];
-    const used = new Set();
+    const usedBlobs = new Set();
+    const usedStrips = new Set();
 
     for (const pred of predictions) {
-      let bestDist = Infinity;
-      let bestIdx = -1;
+      const isStripEdge = pred.id.startsWith('S') && pred.id.includes('_');
 
-      for (let i = 0; i < blobs.length; i++) {
-        if (used.has(i)) continue;
-        const dx = blobs[i].x - pred.x;
-        const dy = blobs[i].y - pred.y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
+      if (isStripEdge) {
+        // Match against strip blobs (using strip center + edge positions)
+        // Strip edges are harder to track individually; use strip centers with larger window
+        let bestDist = Infinity;
+        let bestIdx = -1;
 
-        // Search window: within 5% of image dimension
-        if (dist < 0.05 && dist < bestDist) {
-          bestDist = dist;
-          bestIdx = i;
+        for (let i = 0; i < (stripBlobs || []).length; i++) {
+          if (usedStrips.has(i)) continue;
+          const strip = stripBlobs[i];
+          // Check against the appropriate edge
+          const isLeft = pred.id.endsWith('_L');
+          const edgePt = isLeft ? strip.edgeLeft : strip.edgeRight;
+          if (!edgePt) continue;
+
+          const dx = edgePt.nx - pred.x;
+          const dy = edgePt.ny - pred.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+
+          if (dist < 0.08 && dist < bestDist) { // Larger window for strips
+            bestDist = dist;
+            bestIdx = i;
+          }
         }
-      }
 
-      if (bestIdx >= 0) {
-        used.add(bestIdx);
-        matched.push({ ...blobs[bestIdx], id: pred.id });
+        if (bestIdx >= 0) {
+          const strip = stripBlobs[bestIdx];
+          const isLeft = pred.id.endsWith('_L');
+          const edgePt = isLeft ? strip.edgeLeft : strip.edgeRight;
+          // Don't mark strip as used — same strip has left AND right edges
+          matched.push({ id: pred.id, x: edgePt.nx, y: edgePt.ny });
+        }
+      } else {
+        // Match against LED blobs (original logic)
+        let bestDist = Infinity;
+        let bestIdx = -1;
+
+        for (let i = 0; i < blobs.length; i++) {
+          if (usedBlobs.has(i)) continue;
+          const dx = blobs[i].x - pred.x;
+          const dy = blobs[i].y - pred.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+
+          if (dist < 0.05 && dist < bestDist) {
+            bestDist = dist;
+            bestIdx = i;
+          }
+        }
+
+        if (bestIdx >= 0) {
+          usedBlobs.add(bestIdx);
+          matched.push({ id: pred.id, x: blobs[bestIdx].x, y: blobs[bestIdx].y });
+        }
       }
     }
 
@@ -504,13 +634,36 @@
     // Draw current video frame to offscreen canvas
     state.offCtx.drawImage(video, 0, 0, state.offscreen.width, state.offscreen.height);
 
-    return blobDetector.refinePositions(
-      points,
-      state.offCtx,
-      state.offscreen.width,
-      state.offscreen.height,
-      16
-    );
+    // Only refine LED points (not strip edges)
+    const refined = [];
+    const ledPoints = [];
+
+    for (const p of points) {
+      // Check if this is a LED point (not a strip edge)
+      const isStripEdge = p.id && p.id.startsWith('S') && p.id.includes('_');
+
+      if (isStripEdge) {
+        // Skip refinement for strip edges
+        refined.push(p);
+      } else {
+        // Collect LED points for batch refinement
+        ledPoints.push(p);
+      }
+    }
+
+    // Refine LED points if any
+    if (ledPoints.length > 0) {
+      const refinedLEDs = blobDetector.refinePositions(
+        ledPoints,
+        state.offCtx,
+        state.offscreen.width,
+        state.offscreen.height,
+        16
+      );
+      refined.push(...refinedLEDs);
+    }
+
+    return refined;
   }
 
   // --- Pose Computation ---
@@ -518,28 +671,14 @@
   let lastPose = null;
   let poseStability = 0;
 
-  function solvePose(trackedPoints, stability) {
-    if (trackedPoints.length < 5) return;
-
-    // Convert normalized coordinates to pixel coordinates
+  function solvePoseFromMatch(match, stability) {
     const vw = video.videoWidth;
     const vh = video.videoHeight;
 
-    const objectPoints = [];
-    const imagePoints = [];
+    const objectPoints = match.points3D; // already {x, y, z} in mm
+    const imagePoints = match.points2D.map(p => normalizedToPixel(p.x, p.y, vw, vh));
 
-    for (const p of trackedPoints) {
-      const led = LED_GEOMETRY.points3D.find(l => l.id === p.id);
-      if (!led) continue;
-      objectPoints.push({ x: led.x, y: led.y, z: led.z });
-
-      // Convert from normalized (0-1) to pixel coordinates
-      // Need to account for object-fit: cover cropping
-      const pixelCoords = normalizedToPixel(p.x, p.y, vw, vh);
-      imagePoints.push(pixelCoords);
-    }
-
-    if (objectPoints.length < 5) return;
+    if (objectPoints.length < 4) return;
 
     const result = pnpSolver.solve(objectPoints, imagePoints);
 
@@ -547,11 +686,60 @@
       lastPose = result;
       poseStability = poseStability * 0.8 + stability * 0.2;
 
-      // 自適應峰值檢測器：根據距離調整 NMS 半徑
+      // Adaptive peak detector feedback
       if (peakDetector && result.distance > 0) {
         const distanceMM = result.distance * 1000;
-        const ledDiameterMM = 5;
-        // 計算 LED 在降採樣圖中的預期像素直徑（使用實際 downscale 值）
+        const ledDiameterMM = 6; // Updated from 5mm to 6mm per dimension diagram
+        const ds = state.lastDownscale || 4;
+        const expectedPixels = (ledDiameterMM / distanceMM) * pnpSolver.fx / ds;
+        peakDetector.setExpectedLEDSize(expectedPixels);
+      }
+    }
+  }
+
+  function solvePoseFromTracked(trackedPoints) {
+    const vw = video.videoWidth;
+    const vh = video.videoHeight;
+
+    const objectPoints = [];
+    const imagePoints = [];
+
+    for (const p of trackedPoints) {
+      // Look up 3D position from DEVICE_GEOMETRY
+      let point3D = null;
+
+      // Check if it's a LED
+      const led = DEVICE_GEOMETRY.leds.find(l => l.id === p.id);
+      if (led) {
+        point3D = { x: led.x, y: led.y, z: led.z };
+      }
+
+      // Check if it's a strip edge
+      if (!point3D) {
+        const edge = DEVICE_GEOMETRY.stripEdges.find(e => e.id === p.id);
+        if (edge) {
+          point3D = { x: edge.x, y: edge.y, z: edge.z };
+        }
+      }
+
+      if (!point3D) continue;
+
+      objectPoints.push(point3D);
+      imagePoints.push(normalizedToPixel(p.x, p.y, vw, vh));
+    }
+
+    if (objectPoints.length < 4) return;
+
+    const result = pnpSolver.solve(objectPoints, imagePoints);
+
+    if (result.success && result.reprojError < 30) {
+      lastPose = result;
+      // Keep the existing poseStability smoothing
+
+      // Adaptive peak detector feedback
+      if (peakDetector && result.distance > 0) {
+        const distanceMM = result.distance * 1000;
+        const ledDiameterMM = 6;
         const ds = state.lastDownscale || 4;
         const expectedPixels = (ledDiameterMM / distanceMM) * pnpSolver.fx / ds;
         peakDetector.setExpectedLEDSize(expectedPixels);
@@ -598,8 +786,17 @@
     const data = {
       fps: state.fps,
       candidateCount: state.lastCandidateCount || 0,
+      stripCount: state.lastStripCount || 0,
       resolution: state.resolution || null,
-      threshold: blueFilter ? blueFilter.threshold : 0
+      threshold: blueFilter ? blueFilter.threshold : 0,
+      version: APP_VERSION,
+      // Debug info for mobile HUD
+      focusStatus: state.focusStatus || 'unknown',
+      tapFocus: state.tapFocusSupported ? 'yes' : 'no',
+      downscale: state.lastDownscale || '?',
+      maskPercent: state.lastMaskPercent || 0,
+      peakCount: state.lastPeakCount || 0,
+      maxCandidates: 20
     };
 
     if (lastPose && (state.detectionState === 'locked' || state.detectionState === 'tracking')) {
@@ -664,12 +861,13 @@
     const imgData = tmpCtx.createImageData(width, height);
 
     for (let i = 0; i < width * height; i++) {
-      const val = mask[i];
-      const strength = blueDiffValues ? blueDiffValues[i] : val;
-      imgData.data[i * 4] = 0;                    // R
-      imgData.data[i * 4 + 1] = 0;                // G
-      imgData.data[i * 4 + 2] = val > 0 ? 255 : 0; // B
-      imgData.data[i * 4 + 3] = val > 0 ? Math.min(200, strength + 80) : 0; // A
+      const v = mask[i];
+      // Grayscale rendering for continuous mask
+      const alpha = v > 10 ? Math.min(200, v + 80) : 0;
+      imgData.data[i * 4] = v * 0.3;     // R (slight tint)
+      imgData.data[i * 4 + 1] = v * 0.3; // G (slight tint)
+      imgData.data[i * 4 + 2] = v;       // B (full brightness for blue tint)
+      imgData.data[i * 4 + 3] = alpha;   // A
     }
 
     tmpCtx.putImageData(imgData, 0, 0);
@@ -678,13 +876,14 @@
     const rect = getMaskDisplayRect(width, height);
     overlayCtx.save();
     overlayCtx.globalAlpha = 0.6;
+    overlayCtx.imageSmoothingEnabled = false;
     overlayCtx.drawImage(tmpCanvas, rect.drawX, rect.drawY, rect.drawW, rect.drawH);
     overlayCtx.restore();
   }
 
   function drawMaskFullscreen(filterResult) {
     if (!filterResult) return;
-    const { mask, blueDiffValues, width, height } = filterResult;
+    const { mask, blueDiffValues, width, height, bluePixels } = filterResult;
     const displayW = window.innerWidth;
     const displayH = window.innerHeight;
 
@@ -701,24 +900,33 @@
     const imgData = tmpCtx.createImageData(width, height);
 
     for (let i = 0; i < width * height; i++) {
-      const val = mask[i];
-      const strength = blueDiffValues ? blueDiffValues[i] : 255;
-      if (val > 0) {
-        // Blue bright spots
-        imgData.data[i * 4] = Math.min(255, strength);       // R (slight)
-        imgData.data[i * 4 + 1] = Math.min(255, strength);   // G (slight)
-        imgData.data[i * 4 + 2] = 255;                        // B (full)
-        imgData.data[i * 4 + 3] = 255;                        // A
-      } else {
-        imgData.data[i * 4 + 3] = 0; // Transparent (show black bg)
-      }
+      const v = mask[i];
+      imgData.data[i * 4] = v;     // R
+      imgData.data[i * 4 + 1] = v; // G
+      imgData.data[i * 4 + 2] = v; // B
+      imgData.data[i * 4 + 3] = v > 10 ? 255 : 0; // A
     }
 
     tmpCtx.putImageData(imgData, 0, 0);
 
-    // Draw with object-fit:cover alignment
+    // Draw with object-fit:cover alignment (crisp pixels for debug mask)
     const rect = getMaskDisplayRect(width, height);
+    overlayCtx.imageSmoothingEnabled = false;
     overlayCtx.drawImage(tmpCanvas, rect.drawX, rect.drawY, rect.drawW, rect.drawH);
+    overlayCtx.imageSmoothingEnabled = true;
+
+    // Empty mask warning
+    if (!bluePixels || bluePixels.length < 5) {
+      overlayCtx.save();
+      overlayCtx.font = 'bold 16px -apple-system, sans-serif';
+      overlayCtx.textAlign = 'center';
+      overlayCtx.fillStyle = 'rgba(255, 200, 50, 0.9)';
+      overlayCtx.fillText('\u26a0 遮罩為空 — 請降低飽和度門檻', displayW / 2, displayH / 2);
+      overlayCtx.font = '13px -apple-system, sans-serif';
+      overlayCtx.fillStyle = 'rgba(200, 200, 200, 0.7)';
+      overlayCtx.fillText('目前無藍色像素通過篩選', displayW / 2, displayH / 2 + 24);
+      overlayCtx.restore();
+    }
 
     // Still draw HUD info on top
     feedback.draw(overlayCtx, displayW, displayH, getDrawData(), true);
@@ -757,6 +965,20 @@
       feedback.setState('scanning');
     });
 
+    // Reset detection parameters to defaults
+    btnResetParams.addEventListener('click', () => {
+      cfgThreshold.value = 0.30;   valThreshold.textContent = '0.30';
+      cfgBrightness.value = 0.15;  valBrightness.textContent = '0.15';
+      cfgAdaptive.checked = true;
+
+      if (blueFilter) {
+        blueFilter.setThreshold(0.30);
+        blueFilter.setBrightnessFloor(0.15);
+        blueFilter.adaptiveEnabled = true;
+      }
+      state.adaptiveThreshold = true;
+    });
+
     // Settings drawer toggle
     btnSettings.addEventListener('click', () => {
       settingsDrawer.classList.toggle('hidden');
@@ -772,7 +994,10 @@
         document.querySelectorAll('[data-sensitivity]').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         state.sensitivity = btn.dataset.sensitivity;
-        geometryMatcher.setSensitivity(state.sensitivity);
+
+        // Map old sensitivity names to new
+        const sensitivityMap = { low: 'strict', medium: 'normal', high: 'relaxed' };
+        geometryMatcher.setSensitivity(sensitivityMap[state.sensitivity] || 'normal');
       });
     });
 
@@ -817,25 +1042,51 @@
       });
     });
 
-    // HSV Hue Center
-    cfgHue.addEventListener('input', () => {
-      const deg = parseFloat(cfgHue.value);
-      valHue.textContent = deg + '°';
-      if (blueFilter) blueFilter.setHueCenter(deg / 360);
-    });
+    // === Tap-to-focus ===
+    // 點擊 overlay canvas → pointsOfInterest 對焦到該區域
+    overlay.addEventListener('click', async (e) => {
+      if (!state.running) return;
+      const track = state.stream?.getVideoTracks()[0];
+      if (!track) return;
 
-    // HSV Hue Range
-    cfgHueRange.addEventListener('input', () => {
-      const deg = parseFloat(cfgHueRange.value);
-      valHueRange.textContent = '±' + deg + '°';
-      if (blueFilter) blueFilter.setHueRange(deg / 360);
-    });
+      // 計算點擊位置的正規化座標 (0-1)
+      const rect = overlay.getBoundingClientRect();
+      const nx = (e.clientX - rect.left) / rect.width;
+      const ny = (e.clientY - rect.top) / rect.height;
 
-    // HSV Saturation Min
-    cfgSat.addEventListener('input', () => {
-      const val = parseFloat(cfgSat.value);
-      valSat.textContent = val.toFixed(2);
-      if (blueFilter) blueFilter.setSatMin(val);
+      // 顯示對焦圓圈動畫
+      state.focusRing = { x: e.clientX - rect.left, y: e.clientY - rect.top, t: Date.now() };
+      if (focusRingTimer) clearTimeout(focusRingTimer);
+      focusRingTimer = setTimeout(() => { state.focusRing = null; }, 1500);
+
+      // 嘗試 pointsOfInterest + single-shot 對焦
+      try {
+        const constraints = { advanced: [{ pointsOfInterest: [{ x: nx, y: ny }] }] };
+        await track.applyConstraints(constraints);
+        console.log(`tap-to-focus at (${nx.toFixed(2)}, ${ny.toFixed(2)})`);
+      } catch (e1) {
+        console.warn('pointsOfInterest failed:', e1.message);
+      }
+
+      // 嘗試 single-shot 對焦模式（觸發一次自動對焦）
+      try {
+        await track.applyConstraints({ focusMode: 'single-shot' });
+        // 2 秒後恢復 continuous
+        setTimeout(async () => {
+          try {
+            await track.applyConstraints({ focusMode: 'continuous' });
+          } catch (e2) {}
+        }, 2000);
+      } catch (e3) {
+        console.warn('single-shot focus failed:', e3.message);
+      }
+
+      // 更新 HUD
+      state.focusStatus = 'focusing...';
+      setTimeout(() => {
+        const s = track.getSettings();
+        state.focusStatus = s.focusMode || 'continuous';
+      }, 2500);
     });
 
     // Camera intrinsics
@@ -861,7 +1112,11 @@
   function init() {
     initModules();
     setupEventListeners();
-    console.log('WebTag 6DoF Locator v2.0 initialized (no OpenCV)');
+    // Set version on start screen
+    const versionHint = document.getElementById('version-hint');
+    if (versionHint) versionHint.textContent = `v${APP_VERSION} - 無需 OpenCV`;
+
+    console.log(`WebTag 6DoF Locator v${APP_VERSION} initialized (no OpenCV)`);
   }
 
   // Run on load

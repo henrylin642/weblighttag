@@ -25,7 +25,7 @@
           <h1>WebTag 6DoF Locator</h1>
           <p>瀏覽器端 5-LED 定位系統</p>
           <button id="btn-start" class="btn-primary">啟動相機</button>
-          <p class="hint">v2.0 - 無需 OpenCV</p>
+          <p class="hint" id="version-hint">v2.5.1 - 無需 OpenCV</p>
         </div>
       </div>
 
@@ -49,8 +49,8 @@
 
           <!-- Blue threshold -->
           <div class="setting-group">
-            <label>藍光閾值: <span id="val-threshold">0.12</span></label>
-            <input id="cfg-threshold" type="range" min="0.02" max="0.40" step="0.01" value="0.12" />
+            <label>亮度門檻: <span id="val-threshold">0.30</span></label>
+            <input id="cfg-threshold" type="range" min="0.05" max="0.60" step="0.01" value="0.30" />
           </div>
 
           <!-- Brightness floor -->
@@ -85,22 +85,9 @@
             </div>
           </div>
 
-          <!-- HSV Hue Center -->
+          <!-- 對焦提示 -->
           <div class="setting-group">
-            <label>色相中心: <span id="val-hue">227°</span></label>
-            <input id="cfg-hue" type="range" min="0" max="360" step="1" value="227" />
-          </div>
-
-          <!-- HSV Hue Range -->
-          <div class="setting-group">
-            <label>色相範圍: <span id="val-hue-range">±43°</span></label>
-            <input id="cfg-hue-range" type="range" min="5" max="180" step="1" value="43" />
-          </div>
-
-          <!-- HSV Saturation Min -->
-          <div class="setting-group">
-            <label>飽和度門檻: <span id="val-sat">0.15</span></label>
-            <input id="cfg-sat" type="range" min="0" max="1.00" step="0.01" value="0.15" />
+            <label style="font-size:0.85em;color:#aaa">👆 點擊畫面可對焦到該位置</label>
           </div>
 
           <!-- Camera intrinsics (advanced) -->
@@ -117,6 +104,7 @@
           <div class="drawer-actions">
             <button id="btn-stop" class="btn-secondary">停止相機</button>
             <button id="btn-reset" class="btn-secondary">重置追蹤</button>
+            <button id="btn-reset-params" class="btn-secondary">重置參數</button>
           </div>
         </div>
       </div>
